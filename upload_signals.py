@@ -1,27 +1,26 @@
 """
 upload_signals.py
 -----------------
-把 scanner.py 生成的 scan_report_YYYY-MM-DD.json 上传到 Supabase signals 表。
+把 scanner.py 生成的 signals/YYYY-MM-DD.json 上传到 Supabase signals 表。
 
 用法：
-    python upload_signals.py                       # 上传最新报告
-    python upload_signals.py scan_report_2026-06-07.json  # 指定文件
+    python upload_signals.py                          # 上传最新报告
+    python upload_signals.py signals/2026-06-07.json # 指定文件
 
 环境变量（在 .env.local 或系统环境中设置）：
     SUPABASE_URL      = https://xxxx.supabase.co
-    SUPABASE_ANON_KEY = eyJ...（anon public key）
+    SUPABASE_ANON_KEY = sb_publishable_...
 """
 
 import json
 import os
 import sys
 import glob
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
-# ── 读取环境变量 ──────────────────────────────────────────
+# ── 读取环境变量 ─────────────────────────────────────────
 def load_env():
-    """尝试从 .env.local 加载环境变量（如果 python-dotenv 可用）"""
     try:
         from dotenv import load_dotenv
         env_path = Path(__file__).parent / '.env.local'
@@ -29,7 +28,7 @@ def load_env():
             load_dotenv(env_path)
             print(f'  ✓ 从 {env_path.name} 加载环境变量')
     except ImportError:
-        pass  # 没有 python-dotenv 时从系统环境变量读取
+        pass
 
 load_env()
 
@@ -41,13 +40,15 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     print('   请在 .env.local 文件中配置（参考 .env.example）')
     sys.exit(1)
 
-# ── 找到要上传的文件 ──────────────────────────────────────
+# ── 找到要上传的文件 ─────────────────────────────────────
+BASE_DIR = Path(__file__).parent
+
 if len(sys.argv) >= 2:
     report_file = sys.argv[1]
 else:
-    files = sorted(glob.glob('scan_report_*.json'), reverse=True)
+    files = sorted(glob.glob(str(BASE_DIR / 'signals' / '*.json')), reverse=True)
     if not files:
-        print('❌ 找不到 scan_report_*.json 文件，请先运行 scanner.py')
+        print('❌ 找不到 signals/*.json 文件，请先运行 scanner.py')
         sys.exit(1)
     report_file = files[0]
 
@@ -56,39 +57,42 @@ print(f'📂 上传文件: {report_file}')
 with open(report_file, 'r', encoding='utf-8') as f:
     data = json.load(f)
 
-scan_date = data.get('scan_date') or datetime.now().strftime('%Y-%m-%d')
+scan_date    = data.get('scan_date') or datetime.now().strftime('%Y-%m-%d')
+generated_at = data.get('generated_at')
+summary      = data.get('summary', {})
 
-# ── 调用 Supabase REST API（不依赖额外库）────────────────
+payload = json.dumps({
+    'scan_date':    scan_date,
+    'generated_at': generated_at,
+    'candidates':   summary.get('candidates', 0),
+    'watch_now':    summary.get('watch_now', 0),
+    'watching':     summary.get('watching', 0),
+    'close_alerts': summary.get('close_alerts', 0),
+    'data':         data,
+    'created_at':   datetime.now(timezone.utc).isoformat(),
+}).encode('utf-8')
+
+# ── 调用 Supabase REST API ──────────────────────────────
 import urllib.request
 import urllib.error
 
-payload = json.dumps({
-    'scan_date': scan_date,
-    'data': data,
-    'created_at': datetime.utcnow().isoformat() + 'Z'
-}).encode('utf-8')
-
 url = f'{SUPABASE_URL}/rest/v1/signals'
 headers = {
-    'Content-Type': 'application/json',
-    'apikey': SUPABASE_KEY,
+    'Content-Type':  'application/json',
+    'apikey':        SUPABASE_KEY,
     'Authorization': f'Bearer {SUPABASE_KEY}',
-    # upsert：如果同一 scan_date 已存在则更新
-    'Prefer': 'resolution=merge-duplicates,return=representation',
+    'Prefer':        'resolution=merge-duplicates,return=representation',
 }
 
 req = urllib.request.Request(url, data=payload, headers=headers, method='POST')
 
 try:
     with urllib.request.urlopen(req) as resp:
-        body = resp.read().decode('utf-8')
-        print(f'✅ 上传成功！HTTP {resp.status}')
-        try:
-            result = json.loads(body)
-            if result:
-                print(f'   scan_date = {result[0].get("scan_date")}，id = {result[0].get("id")}')
-        except Exception:
-            pass
+        body   = resp.read().decode('utf-8')
+        result = json.loads(body)
+        r0     = result[0] if result else {}
+        print(f'✅ 上传成功！scan_date={r0.get("scan_date")}  '
+              f'watch_now={r0.get("watch_now")}  watching={r0.get("watching")}')
 except urllib.error.HTTPError as e:
     body = e.read().decode('utf-8')
     print(f'❌ 上传失败：HTTP {e.code}')

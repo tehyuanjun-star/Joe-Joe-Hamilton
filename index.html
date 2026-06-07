@@ -498,6 +498,7 @@ input[type=file] { display: none; }
   <nav class="header-nav">
     <span id="cloud-status" class="offline">⚫ 本地</span>
     <button class="btn" onclick="showView('dashboard')">📋 交易列表</button>
+    <button class="btn" onclick="showView('signals')">📡 信号扫描</button>
     <button class="btn btn-primary" onclick="newTrade()">＋ 新建交易</button>
     <button class="btn" onclick="saveAsPortableFile()" style="border-color:#3fb950;color:#3fb950" title="生成含所有数据的 HTML，放入 Google Drive 即可跨电脑使用">☁️ 另存存档</button>
     <button class="btn" onclick="exportData()">↓ 导出 Excel</button>
@@ -706,6 +707,81 @@ input[type=file] { display: none; }
       <button class="btn btn-primary" onclick="saveTrade()">💾 保存交易</button>
     </div>
   </div>
+
+  <!-- ═══════════════ SIGNALS ═══════════════ -->
+  <div id="v-signals" class="view">
+
+    <!-- Status bar -->
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r);padding:14px 20px;margin-bottom:18px;display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">上次扫描</div>
+        <div style="font-weight:600;font-size:14px" id="sig-generated">—</div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">候选总数</div>
+        <div style="font-weight:700;font-size:18px;color:var(--accent)" id="sig-candidates">—</div>
+      </div>
+      <div style="display:flex;gap:14px">
+        <div style="text-align:center">
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px">🔴 立即关注</div>
+          <div style="font-size:22px;font-weight:700;color:#f85149" id="sig-watch-now">—</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px">🟡 观察中</div>
+          <div style="font-size:22px;font-weight:700;color:#d29922" id="sig-watching">—</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px">🚨 平仓警告</div>
+          <div style="font-size:22px;font-weight:700;color:#f85149" id="sig-alerts">—</div>
+        </div>
+      </div>
+      <div style="margin-left:auto">
+        <button class="btn btn-primary" onclick="loadSignals()">🔄 刷新</button>
+      </div>
+    </div>
+
+    <!-- Close alerts -->
+    <div id="sig-close-section" style="display:none;margin-bottom:18px">
+      <div style="background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.4);border-radius:var(--r);padding:14px 20px">
+        <div style="font-size:14px;font-weight:700;color:#f85149;margin-bottom:12px">🚨 平仓警告 — 以下持仓需要关注</div>
+        <div id="sig-close-list"></div>
+      </div>
+    </div>
+
+    <!-- Watch now -->
+    <div id="sig-watch-section" style="display:none;margin-bottom:18px">
+      <div style="font-size:14px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px">
+        <span style="background:rgba(248,81,73,.15);color:#f85149;padding:3px 10px;border-radius:12px">🔴 立即关注</span>
+        <span style="font-size:12px;color:var(--text-muted);font-weight:400">三重滤网全部通过，可考虑建仓做空</span>
+      </div>
+      <div id="sig-watch-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px"></div>
+    </div>
+
+    <!-- Watching -->
+    <div id="sig-watching-section" style="display:none;margin-bottom:18px">
+      <div style="font-size:14px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px">
+        <span style="background:rgba(210,153,34,.15);color:#d29922;padding:3px 10px;border-radius:12px">🟡 观察中</span>
+        <span style="font-size:12px;color:var(--text-muted);font-weight:400">第一屏通过，等待 4h / 1h 确认</span>
+      </div>
+      <div class="card">
+        <table>
+          <thead><tr>
+            <th>标的</th><th>距200MA</th><th>Stoch K/D</th><th>EFI背离</th>
+            <th>第一屏</th><th>第二屏(4h)</th><th>第三屏(1h)</th><th>入场区间</th>
+          </tr></thead>
+          <tbody id="sig-watching-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Empty state -->
+    <div id="sig-empty" class="empty">
+      <h3>暂无扫描数据</h3>
+      <p style="margin-top:8px">请先在本地运行 <code style="background:#21262d;padding:2px 6px;border-radius:4px">scanner.py</code>，<br>然后运行 <code style="background:#21262d;padding:2px 6px;border-radius:4px">upload_signals.py</code> 上传结果</p>
+    </div>
+
+  </div><!-- /v-signals -->
+
 </main>
 
 <!-- Image modal -->
@@ -845,8 +921,11 @@ function persist() {
 ════════════════════════════════════════ */
 function showView(id) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  document.getElementById(id === 'dashboard' ? 'v-dash' : 'v-form').classList.add('active');
+  const viewMap = { dashboard: 'v-dash', form: 'v-form', signals: 'v-signals' };
+  const target  = viewMap[id] || 'v-dash';
+  document.getElementById(target).classList.add('active');
   if (id === 'dashboard') renderDash();
+  if (id === 'signals')   loadSignals();
 }
 
 function newTrade() {
@@ -1758,6 +1837,177 @@ async function fetchApiTrades() {
   } catch(e) {
     // 无 server.py 时静默忽略
   }
+}
+
+/* ════════════════════════════════════════
+   信号扫描 Tab
+════════════════════════════════════════ */
+let _lastSignalDate = null;
+
+async function loadSignals() {
+  if (!_sb) {
+    document.getElementById('sig-empty').style.display = 'block';
+    document.getElementById('sig-empty').innerHTML = `<div class="empty"><h3>需要云端连接</h3><p>信号数据存储在 Supabase，请确保已部署到 Vercel 并配置环境变量</p></div>`;
+    return;
+  }
+  document.getElementById('sig-empty').style.display = 'none';
+
+  try {
+    const { data, error } = await _sb
+      .from('signals')
+      .select('*')
+      .order('scan_date', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error || !data) {
+      document.getElementById('sig-empty').style.display = 'block';
+      return;
+    }
+
+    renderSignals(data);
+  } catch (e) {
+    console.error('loadSignals error:', e);
+    document.getElementById('sig-empty').style.display = 'block';
+  }
+}
+
+function renderSignals(row) {
+  const d = row.data;
+  const summary = d.summary || {};
+
+  // status bar
+  document.getElementById('sig-generated').textContent  = d.generated_at ? d.generated_at.replace('T',' ') : '—';
+  document.getElementById('sig-candidates').textContent = summary.candidates ?? '—';
+  document.getElementById('sig-watch-now').textContent  = summary.watch_now  ?? 0;
+  document.getElementById('sig-watching').textContent   = summary.watching   ?? 0;
+  document.getElementById('sig-alerts').textContent     = summary.close_alerts ?? 0;
+
+  // close alerts
+  const closeAlerts = (d.position_monitor || []).filter(p => p.close_signal?.warning);
+  const closeSection = document.getElementById('sig-close-section');
+  if (closeAlerts.length) {
+    closeSection.style.display = 'block';
+    document.getElementById('sig-close-list').innerHTML = closeAlerts.map(p => `
+      <div style="display:flex;align-items:flex-start;gap:12px;padding:8px 0;border-top:1px solid rgba(248,81,73,.2)">
+        <span style="font-size:16px;font-weight:700;color:#f85149;min-width:60px">${p.symbol}</span>
+        <div>
+          <span style="font-size:12px;color:var(--text-muted)">入场价 $${p.entry_price}  现价 $${p.current_price}  盈亏 ${p.pnl_pct >= 0 ? '+' : ''}${p.pnl_pct?.toFixed(2)}%</span><br>
+          <span style="font-size:12px;color:#f85149">${(p.close_signal.reasons || []).join(' · ')}</span>
+        </div>
+      </div>`).join('');
+  } else {
+    closeSection.style.display = 'none';
+  }
+
+  const signals = d.signals || [];
+  const watchNow  = signals.filter(s => s.status === '立即关注');
+  const watching  = signals.filter(s => s.status === '观察中');
+
+  // watch now cards
+  const watchSection = document.getElementById('sig-watch-section');
+  if (watchNow.length) {
+    watchSection.style.display = 'block';
+    document.getElementById('sig-watch-grid').innerHTML = watchNow.map(s => signalCard(s)).join('');
+  } else {
+    watchSection.style.display = 'none';
+  }
+
+  // watching list
+  const watchingSection = document.getElementById('sig-watching-section');
+  if (watching.length) {
+    watchingSection.style.display = 'block';
+    document.getElementById('sig-watching-body').innerHTML = watching.map(s => {
+      const f  = s.fundamentals || {};
+      const s1 = s.screen1_daily || {};
+      const s2 = s.screen2_4h   || {};
+      const s3 = s.screen3_1h   || {};
+      const ep = s.entry_range;
+      const pct = f.price_vs_ma200_pct;
+      return `<tr onclick="preFillTrade('${s.symbol}')" style="cursor:pointer">
+        <td><strong>${s.symbol}</strong></td>
+        <td class="${pct >= 0 ? 'pos' : 'neg'}">${pct != null ? (pct >= 0 ? '+' : '') + pct + '%' : '—'}</td>
+        <td>${s1.stoch_k ?? '—'} / ${s1.stoch_d ?? '—'}</td>
+        <td>${s1.efi13_divergence ? '<span style="color:#3fb950">✓ 成立</span>' : '<span style="color:var(--text-muted)">✗</span>'}</td>
+        <td>${s1.pass ? '<span style="color:#3fb950">✓</span>' : '<span style="color:#f85149">✗</span>'}</td>
+        <td>${s2.pass ? '<span style="color:#3fb950">✓</span>' : '<span style="color:#f85149">✗</span>'}</td>
+        <td>${s3.pass ? '<span style="color:#3fb950">✓</span>' : '<span style="color:#f85149">✗</span>'}</td>
+        <td style="font-size:12px;color:var(--text-muted)">${ep ? '$' + ep.low + ' – $' + ep.high : '—'}</td>
+      </tr>`;
+    }).join('');
+  } else {
+    watchingSection.style.display = 'none';
+  }
+
+  if (!watchNow.length && !watching.length && !closeAlerts.length) {
+    document.getElementById('sig-empty').style.display = 'block';
+    document.getElementById('sig-empty').innerHTML = `<div class="empty"><h3>本次扫描无信号</h3><p>扫描日期：${d.scan_date}，候选 ${summary.candidates ?? 0} 只，未发现符合三重滤网条件的股票</p></div>`;
+  } else {
+    document.getElementById('sig-empty').style.display = 'none';
+  }
+}
+
+function signalCard(s) {
+  const f  = s.fundamentals || {};
+  const s1 = s.screen1_daily || {};
+  const s2 = s.screen2_4h   || {};
+  const s3 = s.screen3_1h   || {};
+  const ep = s.entry_range;
+  const pct = f.price_vs_ma200_pct;
+  const pctStr = pct != null ? (pct >= 0 ? '+' : '') + pct + '%' : '—';
+
+  const dot = (pass) => pass
+    ? '<span style="color:#3fb950;font-weight:700">✓</span>'
+    : '<span style="color:#f85149">✗</span>';
+
+  const macdLabel = (state) => {
+    if (!state) return '—';
+    const m = { deep_green:'深绿↗', light_green:'浅绿↘', negative:'负值', mixed:'混合', unknown:'—' };
+    return m[state] || state;
+  };
+
+  return `<div style="background:var(--bg-card);border:1px solid rgba(248,81,73,.35);border-radius:var(--r);padding:16px;position:relative">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+      <div>
+        <div style="font-size:20px;font-weight:800;color:#f85149">${s.symbol}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${f.market||''} · $${f.close ?? '—'}</div>
+      </div>
+      <span style="background:rgba(248,81,73,.15);color:#f85149;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600">🔴 立即关注</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;margin-bottom:12px">
+      <div style="background:var(--bg-input);border-radius:4px;padding:7px 10px">
+        <div style="color:var(--text-muted);font-size:10px;margin-bottom:3px">距 200MA</div>
+        <div style="font-weight:700;color:${pct >= 0 ? '#3fb950' : '#f85149'}">${pctStr}</div>
+      </div>
+      <div style="background:var(--bg-input);border-radius:4px;padding:7px 10px">
+        <div style="color:var(--text-muted);font-size:10px;margin-bottom:3px">Stochastic K/D</div>
+        <div style="font-weight:700;color:#d29922">${s1.stoch_k ?? '—'} / ${s1.stoch_d ?? '—'}</div>
+      </div>
+      <div style="background:var(--bg-input);border-radius:4px;padding:7px 10px">
+        <div style="color:var(--text-muted);font-size:10px;margin-bottom:3px">EFI 顶背离</div>
+        <div style="font-weight:700">${s1.efi13_divergence ? '<span style="color:#3fb950">✓ 成立</span>' : '<span style="color:#f85149">✗ 未成立</span>'}</div>
+      </div>
+      <div style="background:var(--bg-input);border-radius:4px;padding:7px 10px">
+        <div style="color:var(--text-muted);font-size:10px;margin-bottom:3px">MACD 日线</div>
+        <div style="font-weight:700;color:var(--text-muted)">${macdLabel(s1.macd_hist_state)}</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;font-size:11px;margin-bottom:12px">
+      <span style="background:var(--bg-input);padding:3px 8px;border-radius:4px">第一屏 ${dot(s1.pass)}</span>
+      <span style="background:var(--bg-input);padding:3px 8px;border-radius:4px">4h ${dot(s2.pass)}</span>
+      <span style="background:var(--bg-input);padding:3px 8px;border-radius:4px">1h ${dot(s3.pass)}</span>
+    </div>
+    ${ep ? `<div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">入场区间：<strong style="color:var(--text)">$${ep.low} – $${ep.high}</strong></div>` : ''}
+    <button class="btn btn-primary btn-sm" style="width:100%" onclick="preFillTrade('${s.symbol}')">＋ 新建交易</button>
+  </div>`;
+}
+
+function preFillTrade(symbol) {
+  newTrade();
+  setTimeout(() => {
+    document.getElementById('f-sym').value = symbol;
+    document.getElementById('f-dir').value = 'short';
+  }, 50);
 }
 
 /* ════════════════════════════════════════
