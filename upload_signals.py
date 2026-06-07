@@ -88,7 +88,7 @@ payload = json.dumps({
 import urllib.request
 import urllib.error
 
-url = f'{SUPABASE_URL}/rest/v1/signals'
+url = f'{SUPABASE_URL}/rest/v1/signals?on_conflict=scan_date'
 headers = {
     'Content-Type':  'application/json',
     'apikey':        SUPABASE_KEY,
