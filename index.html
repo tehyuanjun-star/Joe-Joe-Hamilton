@@ -1,0 +1,1779 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>交易日记 Trading Journal</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root {
+  --bg: #0f1117;
+  --bg-card: #161b22;
+  --bg-input: #0d1117;
+  --bg-hover: #1c2128;
+  --border: #30363d;
+  --border-focus: #388bfd;
+  --text: #e6edf3;
+  --text-muted: #7d8590;
+  --accent: #388bfd;
+  --green: #3fb950;
+  --red: #f85149;
+  --yellow: #d29922;
+  --r: 6px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ── Header ── */
+header {
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.logo { font-size: 17px; font-weight: 700; color: var(--accent); display: flex; align-items: center; gap: 8px; }
+.header-nav { display: flex; gap: 8px; }
+
+/* ── Buttons ── */
+.btn {
+  padding: 5px 14px;
+  border-radius: var(--r);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  transition: background .15s, border-color .15s;
+  white-space: nowrap;
+}
+.btn:hover { background: #21262d; border-color: #6e7681; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary:hover { background: #4d94f7; border-color: #4d94f7; }
+.btn-danger { border-color: var(--red); color: var(--red); }
+.btn-danger:hover { background: rgba(248,81,73,.12); }
+.btn-sm { padding: 3px 10px; font-size: 12px; }
+
+/* ── Layout ── */
+main { max-width: 1280px; margin: 0 auto; padding: 24px; }
+.view { display: none; }
+.view.active { display: block; }
+
+/* ── Stats Cards ── */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 14px;
+  margin-bottom: 22px;
+}
+.stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 14px 16px;
+}
+.stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+.stat-value { font-size: 22px; font-weight: 700; }
+.pos { color: var(--green); }
+.neg { color: var(--red); }
+
+/* ── Trade Table ── */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+.card-header {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.card-title { font-size: 14px; font-weight: 600; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 9px 14px; text-align: left; white-space: nowrap; }
+th { background: #21262d; color: var(--text-muted); font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .5px; }
+tbody tr { border-top: 1px solid var(--border); cursor: pointer; transition: background .1s; }
+tbody tr:hover { background: var(--bg-hover); }
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.badge-long  { background: rgba(63,185,80,.15); color: var(--green); }
+.badge-short { background: rgba(248,81,73,.15); color: var(--red); }
+.badge-open  { background: rgba(56,139,253,.15); color: var(--accent); }
+.badge-closed{ background: rgba(125,133,144,.15); color: var(--text-muted); }
+.ga { color: var(--green); font-weight: 700; }
+.gb { color: #3fb950; }
+.gc { color: var(--yellow); }
+.gd { color: #cb7a00; }
+.gf { color: var(--red); }
+
+/* ── Empty State ── */
+.empty {
+  text-align: center;
+  padding: 60px;
+  color: var(--text-muted);
+}
+.empty h3 { font-size: 17px; margin-bottom: 8px; color: var(--text); }
+
+/* ── Form sections ── */
+.form-top {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 18px 20px;
+  margin-bottom: 18px;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 14px;
+}
+.section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  margin-bottom: 18px;
+  overflow: hidden;
+}
+.sec-head {
+  padding: 10px 18px;
+  background: #21262d;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sec-label {
+  background: var(--accent);
+  color: #fff;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.sec-body { padding: 18px 20px; }
+
+/* ── Form controls ── */
+.fg { display: flex; flex-direction: column; gap: 5px; }
+label { font-size: 11px; color: var(--text-muted); font-weight: 500; text-transform: uppercase; letter-spacing: .3px; }
+input[type=text], input[type=number], input[type=date], select, textarea {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  width: 100%;
+  transition: border-color .15s;
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--border-focus); }
+textarea { resize: vertical; min-height: 80px; }
+input[type=number] { -moz-appearance: textfield; }
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
+
+.chart-row {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 4px 6px;
+  margin: 4px -6px;
+  transition: background .15s, outline .15s;
+  outline: 1.5px dashed transparent;
+}
+.chart-row:hover { background: rgba(56,139,253,.07); }
+.chart-row.paste-active {
+  background: rgba(56,139,253,.13);
+  outline-color: var(--accent);
+}
+.paste-tip {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-left: 6px;
+  pointer-events: none;
+}
+.chart-row.paste-active .paste-tip { color: var(--accent); font-weight: 600; }
+
+input[type=date] { cursor: pointer; }
+input[type=date]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7) sepia(1) saturate(3) hue-rotate(180deg);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 3px;
+  opacity: 0.75;
+  transition: opacity .15s;
+}
+input[type=date]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
+select option { background: #1c2128; }
+input[readonly] { color: var(--text-muted); }
+
+/* ── Entry/Exit tables ── */
+.etable-wrap { overflow-x: auto; margin: 8px 0 4px; }
+.etable { font-size: 12px; }
+.etable th { font-size: 11px; }
+.etable td { padding: 5px 6px; }
+.etable td input {
+  padding: 4px 6px;
+  font-size: 12px;
+  min-width: 80px;
+}
+.etable td input[type=date] { min-width: 120px; }
+.add-row {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 4px 0;
+  margin-top: 2px;
+}
+.add-row:hover { text-decoration: underline; }
+.grade-td { font-weight: 600; text-align: center; min-width: 60px; }
+.del-row {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.del-row:hover { color: var(--red); background: rgba(248,81,73,.1); }
+.sub-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  padding: 10px 0 4px;
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.sub-label:first-child { margin-top: 0; border-top: none; padding-top: 0; }
+
+/* ── Exit results per row ── */
+.exit-result {
+  display: flex;
+  gap: 20px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.er-label { font-size: 11px; font-weight: 700; color: var(--text-muted); min-width: 80px; }
+.er-item { display: flex; flex-direction: column; gap: 1px; }
+.er-item span:first-child { font-size: 10px; color: var(--text-muted); }
+.er-item span:last-child { font-weight: 600; font-size: 13px; }
+
+/* ── Trade summary bar ── */
+.summary-bar {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 10px;
+  background: #21262d;
+  border-radius: var(--r);
+  padding: 12px 16px;
+  margin-top: 14px;
+  font-size: 12px;
+}
+.sb-item label { font-size: 10px; display: block; color: var(--text-muted); margin-bottom: 3px; }
+.sb-item .v { font-size: 14px; font-weight: 700; }
+
+/* ── Risk/Reward plan bar ── */
+.form-plan {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 14px 20px;
+  margin-bottom: 18px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  align-items: end;
+}
+.rr-display {
+  font-size: 20px;
+  font-weight: 700;
+  padding: 5px 0;
+  letter-spacing: .5px;
+}
+.rr-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+/* ── Bottom two-col ── */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+/* ── Chart uploads ── */
+.chart-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.chart-row .lbl { font-size: 12px; color: var(--text-muted); min-width: 40px; }
+.chart-preview { display: flex; align-items: center; gap: 6px; }
+.chart-preview img { height: 34px; border-radius: 4px; border: 1px solid var(--border); cursor: pointer; }
+.chart-preview .fn { font-size: 11px; color: var(--accent); cursor: pointer; text-decoration: underline; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rm-chart { background: var(--red); color: #fff; border: none; border-radius: 50%; width: 16px; height: 16px; cursor: pointer; font-size: 9px; display: grid; place-items: center; flex-shrink: 0; }
+input[type=file] { display: none; }
+.upload-note { font-size: 11px; color: var(--text-muted); margin-top: 8px; }
+
+/* ── Tactic list ── */
+.tactic-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.tactic-item:hover { background: #21262d; }
+.tactic-add { display: flex; gap: 6px; margin-top: 8px; }
+.tactic-add input { flex: 1; }
+
+/* ── Form actions ── */
+.form-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding-bottom: 40px;
+}
+
+/* ── Modal ── */
+.overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.85);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+}
+.overlay.on { display: flex; }
+.overlay img { max-width: 92vw; max-height: 92vh; border-radius: var(--r); }
+.overlay-close {
+  position: fixed;
+  top: 16px; right: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 50%;
+  width: 34px; height: 34px;
+  cursor: pointer;
+  font-size: 16px;
+  display: grid;
+  place-items: center;
+}
+
+/* ── Tabs ── */
+.tab-bar {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 4px;
+  width: fit-content;
+}
+.tab-btn {
+  padding: 6px 18px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.tab-btn:hover { background: #21262d; color: var(--text); }
+.tab-btn.active { background: var(--accent); color: #fff; }
+
+/* ── Drill-down trade list ── */
+.drill-row td { padding: 0 !important; border-top: none !important; }
+.drill-inner { padding: 4px 14px 10px; background: var(--bg-input); }
+.drill-inner table { font-size: 12px; }
+.drill-inner tbody tr:hover { background: rgba(56,139,253,.08); }
+.drill-inner thead th { background: #0d1117; font-size: 10px; }
+.drill-inner tbody td { padding: 6px 10px; }
+
+/* ── Period performance table ── */
+.period-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+  margin-bottom: 18px;
+}
+.period-card .ph {
+  padding: 12px 18px;
+  background: #21262d;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.ptable th { font-size: 11px; }
+.ptable td { font-size: 13px; padding: 10px 14px; }
+.ptable tbody tr { border-top: 1px solid var(--border); }
+.ptable tbody tr:hover { background: var(--bg-hover); }
+.win-bar { height: 5px; border-radius: 3px; background: var(--border); margin-top: 4px; min-width: 60px; }
+.win-bar-fill { height: 100%; border-radius: 3px; transition: width .3s; }
+.year-header td {
+  background: #21262d !important;
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--text-muted);
+  letter-spacing: .5px;
+  text-transform: uppercase;
+  padding: 7px 14px !important;
+}
+
+/* ── Cloud status indicator ── */
+#cloud-status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+#cloud-status.online  { border-color: var(--green); color: var(--green); }
+#cloud-status.offline { border-color: var(--text-muted); color: var(--text-muted); }
+#cloud-status.syncing { border-color: var(--accent); color: var(--accent); }
+
+/* ── Responsive ── */
+@media (max-width: 900px) {
+  .stats-grid { grid-template-columns: repeat(3, 1fr); }
+  .form-top { grid-template-columns: repeat(3, 1fr); }
+  .two-col { grid-template-columns: 1fr; }
+  .summary-bar { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 600px) {
+  main { padding: 14px; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .form-top { grid-template-columns: 1fr 1fr; }
+  .summary-bar { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">📈 交易日记</div>
+  <nav class="header-nav">
+    <span id="cloud-status" class="offline">⚫ 本地</span>
+    <button class="btn" onclick="showView('dashboard')">📋 交易列表</button>
+    <button class="btn btn-primary" onclick="newTrade()">＋ 新建交易</button>
+    <button class="btn" onclick="saveAsPortableFile()" style="border-color:#3fb950;color:#3fb950" title="生成含所有数据的 HTML，放入 Google Drive 即可跨电脑使用">☁️ 另存存档</button>
+    <button class="btn" onclick="exportData()">↓ 导出 Excel</button>
+    <button class="btn" onclick="document.getElementById('imp-input').click()">↑ 导入</button>
+    <input type="file" id="imp-input" accept=".json" onchange="handleImport(this)">
+  </nav>
+</header>
+
+<main>
+  <!-- ═══════════════ DASHBOARD ═══════════════ -->
+  <div id="v-dash" class="view active">
+    <div class="stats-grid" id="stats-grid"></div>
+
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchTab('all')">📋 全部交易</button>
+      <button class="tab-btn" onclick="switchTab('monthly')">📅 月度表现</button>
+      <button class="tab-btn" onclick="switchTab('quarterly')">📊 季度表现</button>
+      <button class="tab-btn" onclick="switchTab('yearly')">📅 年度表现</button>
+    </div>
+
+    <!-- All trades tab -->
+    <div id="tab-all">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">交易记录</span>
+          <input type="text" id="search" placeholder="搜索标的…" style="width:200px" oninput="renderList()">
+        </div>
+        <div id="list-body"></div>
+      </div>
+    </div>
+
+    <!-- Monthly tab -->
+    <div id="tab-monthly" style="display:none">
+      <div id="monthly-body"></div>
+    </div>
+
+    <!-- Quarterly tab -->
+    <div id="tab-quarterly" style="display:none">
+      <div id="quarterly-body"></div>
+    </div>
+
+    <!-- Yearly tab -->
+    <div id="tab-yearly" style="display:none">
+      <div id="yearly-body"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ FORM ═══════════════ -->
+  <div id="v-form" class="view">
+
+    <!-- Trade header -->
+    <div class="form-top">
+      <div class="fg"><label>标的代码 Symbol</label><input type="text" id="f-sym" placeholder="ADSK" style="text-transform:uppercase"></div>
+      <div class="fg"><label>市场 Market</label><input type="text" id="f-mkt" placeholder="NASDAQ"></div>
+      <div class="fg"><label>板块 Sector</label><input type="text" id="f-sector" placeholder="Technology"></div>
+      <div class="fg">
+        <label>方向 Direction</label>
+        <select id="f-dir">
+          <option value="long">做多 Long</option>
+          <option value="short">做空 Short</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label>状态 Status</label>
+        <select id="f-status">
+          <option value="open">持仓中 Open</option>
+          <option value="closed">已平仓 Closed</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Risk / Reward plan -->
+    <div class="form-plan">
+      <div class="fg">
+        <label>止损价 Stop Loss</label>
+        <input type="number" step="0.01" id="f-sl" placeholder="0.00" oninput="calcRR()">
+      </div>
+      <div class="fg">
+        <label>目标价 Profit Target</label>
+        <input type="number" step="0.01" id="f-pt" placeholder="0.00" oninput="calcRR()">
+      </div>
+      <div class="fg">
+        <label>计划盈亏比 Planned R/R</label>
+        <div class="rr-display" id="planned-rr">—</div>
+        <div class="rr-sub" id="planned-rr-sub"></div>
+      </div>
+      <div class="fg">
+        <label>实际盈亏比 Actual R/R</label>
+        <div class="rr-display" id="actual-rr">—</div>
+        <div class="rr-sub" id="actual-rr-sub"></div>
+      </div>
+    </div>
+
+    <!-- A: Reason for Entry -->
+    <div class="section">
+      <div class="sec-head"><span class="sec-label">A</span>入场理由 Reason for Entry</div>
+      <div class="sec-body">
+        <textarea id="f-re" placeholder="描述你的入场分析与理由…"></textarea>
+        <div id="ec0" class="chart-row" data-chart-key="E" data-chart-idx="0"><span class="lbl">图表:</span><button class="btn btn-sm" onclick="pickFile('ec-0')">Browse…</button><input type="file" id="ec-0" accept=".jpg,.jpeg,.png,.gif" onchange="loadChart(this,'E',0)"><span id="ep-0" class="chart-preview"><span style="font-size:11px;color:var(--text-muted)">未选择文件</span></span><span class="paste-tip">点击后可 Ctrl+V 粘贴</span></div>
+        <div id="ec1" class="chart-row" data-chart-key="E" data-chart-idx="1"><span class="lbl">图表:</span><button class="btn btn-sm" onclick="pickFile('ec-1')">Browse…</button><input type="file" id="ec-1" accept=".jpg,.jpeg,.png,.gif" onchange="loadChart(this,'E',1)"><span id="ep-1" class="chart-preview"><span style="font-size:11px;color:var(--text-muted)">未选择文件</span></span><span class="paste-tip">点击后可 Ctrl+V 粘贴</span></div>
+        <p class="upload-note">* 仅支持 JPG、JPEG、PNG、GIF 格式，单文件 ≤ 2MB</p>
+      </div>
+    </div>
+
+    <!-- B: Entries & Exits -->
+    <div class="section">
+      <div class="sec-head"><span class="sec-label">B</span>交易明细 Entries &amp; Exits</div>
+      <div class="sec-body">
+        <div class="sub-label">入场 Entry</div>
+        <div class="etable-wrap">
+          <table class="etable">
+            <thead><tr>
+              <th>日期 Date</th>
+              <th>计划价 Order</th>
+              <th>成交价 Filled</th>
+              <th>滑点 Slip</th>
+              <th>股数 Shares</th>
+              <th>总额 Total</th>
+              <th>日高 High</th>
+              <th>日低 Low</th>
+              <th>评分 Grade</th>
+              <th></th>
+            </tr></thead>
+            <tbody id="en-body"></tbody>
+          </table>
+        </div>
+        <button class="add-row" onclick="addRow('en')">[ + 添加入场 add entry ]</button>
+
+        <div class="sub-label">出场 Exit</div>
+        <div class="etable-wrap">
+          <table class="etable">
+            <thead><tr>
+              <th>日期 Date</th>
+              <th>计划价 Order</th>
+              <th>成交价 Filled</th>
+              <th>滑点 Slip</th>
+              <th>股数 Shares</th>
+              <th>总额 Total</th>
+              <th>日高 High</th>
+              <th>日低 Low</th>
+              <th>评分 Grade</th>
+              <th></th>
+            </tr></thead>
+            <tbody id="ex-body"></tbody>
+          </table>
+        </div>
+        <button class="add-row" onclick="addRow('ex')">[ + 添加出场 add exit ]</button>
+
+        <!-- Per-exit results -->
+        <div id="exit-results"></div>
+
+        <!-- Summary bar -->
+        <div class="summary-bar" id="sum-bar" style="display:none">
+          <div class="sb-item"><label>首次入场</label><div class="v" id="s-fe">-</div></div>
+          <div class="sb-item"><label>最后出场</label><div class="v" id="s-le">-</div></div>
+          <div class="sb-item"><label>总股数</label><div class="v" id="s-ts">-</div></div>
+          <div class="sb-item"><label>均入价</label><div class="v" id="s-ae">-</div></div>
+          <div class="sb-item"><label>均出价</label><div class="v" id="s-ax">-</div></div>
+          <div class="sb-item"><label>盈亏 %</label><div class="v" id="s-gp">-</div></div>
+          <div class="sb-item"><label>盈亏额</label><div class="v" id="s-gl">-</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- C + D -->
+    <div class="two-col">
+      <!-- C: Reason for Exit -->
+      <div class="section" style="margin-bottom:0">
+        <div class="sec-head"><span class="sec-label">C</span>出场理由 Reason for Exit</div>
+        <div class="sec-body">
+          <textarea id="f-rx" placeholder="描述你的出场决策与理由…"></textarea>
+          <div class="chart-row" data-chart-key="X" data-chart-idx="0"><span class="lbl">图表:</span><button class="btn btn-sm" onclick="pickFile('xc-0')">Browse…</button><input type="file" id="xc-0" accept=".jpg,.jpeg,.png,.gif" onchange="loadChart(this,'X',0)"><span id="xp-0" class="chart-preview"><span style="font-size:11px;color:var(--text-muted)">未选择文件</span></span><span class="paste-tip">点击后可 Ctrl+V 粘贴</span></div>
+          <div class="chart-row" data-chart-key="X" data-chart-idx="1"><span class="lbl">图表:</span><button class="btn btn-sm" onclick="pickFile('xc-1')">Browse…</button><input type="file" id="xc-1" accept=".jpg,.jpeg,.png,.gif" onchange="loadChart(this,'X',1)"><span id="xp-1" class="chart-preview"><span style="font-size:11px;color:var(--text-muted)">未选择文件</span></span><span class="paste-tip">点击后可 Ctrl+V 粘贴</span></div>
+          <p class="upload-note">* 仅支持 JPG、JPEG、PNG、GIF 格式，单文件 ≤ 2MB</p>
+        </div>
+      </div>
+
+      <!-- D: Exit Tactic -->
+      <div class="section" style="margin-bottom:0">
+        <div class="sec-head"><span class="sec-label">D</span>出场策略 Exit Tactic</div>
+        <div class="sec-body">
+          <select id="f-tactic" style="width:100%;margin-bottom:10px"></select>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">策略列表（可自定义）:</div>
+          <div id="tactic-list"></div>
+          <div class="tactic-add">
+            <input type="text" id="new-tactic" placeholder="新增出场策略…">
+            <button class="btn btn-sm btn-primary" onclick="addTactic()">添加</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- E: Post Trade Analysis -->
+    <div class="section">
+      <div class="sec-head"><span class="sec-label">E</span>复盘分析 Post Trade Analysis</div>
+      <div class="sec-body">
+        <textarea id="f-pa" placeholder="复盘总结：执行情况如何？有何经验教训？下次如何改进？" style="min-height:110px"></textarea>
+        <div class="chart-row" data-chart-key="A" data-chart-idx="0"><span class="lbl">图表:</span><button class="btn btn-sm" onclick="pickFile('ac-0')">Browse…</button><input type="file" id="ac-0" accept=".jpg,.jpeg,.png,.gif" onchange="loadChart(this,'A',0)"><span id="ap-0" class="chart-preview"><span style="font-size:11px;color:var(--text-muted)">未选择文件</span></span><span class="paste-tip">点击后可 Ctrl+V 粘贴</span></div>
+        <p class="upload-note">* 仅支持 JPG、JPEG、PNG、GIF 格式，单文件 ≤ 2MB</p>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <button class="btn" onclick="showView('dashboard')">取消</button>
+      <button class="btn btn-danger" id="del-btn" style="display:none" onclick="deleteTrade()">删除交易</button>
+      <button class="btn btn-primary" onclick="saveTrade()">💾 保存交易</button>
+    </div>
+  </div>
+</main>
+
+<!-- Image modal -->
+<div class="overlay" id="modal" onclick="closeModal()">
+  <button class="overlay-close" onclick="closeModal()">✕</button>
+  <img id="modal-img" src="" alt="">
+</div>
+
+<script>
+/* ════════════════════════════════════════
+   Supabase 云端连接
+════════════════════════════════════════ */
+let _sb = null;  // Supabase client；null = 离线模式（使用 localStorage）
+
+function setCloudStatus(state) {
+  // state: 'online' | 'offline' | 'syncing'
+  const el = document.getElementById('cloud-status');
+  if (!el) return;
+  el.className = state;
+  el.textContent = state === 'online'  ? '🟢 云端同步' :
+                   state === 'syncing' ? '🔄 同步中…'  : '⚫ 本地';
+}
+
+async function initSupabase() {
+  try {
+    const r = await fetch('/api/config', { signal: AbortSignal.timeout(2000) });
+    if (!r.ok) return;
+    const cfg = await r.json();
+    if (!cfg.url || !cfg.key) return;
+    _sb = supabase.createClient(cfg.url, cfg.key);
+    setCloudStatus('online');
+  } catch (_) {
+    /* 本地直接打开 HTML 文件，或 Vercel 未配置环境变量 */
+  }
+}
+
+async function cloudLoad() {
+  if (!_sb) return false;
+  try {
+    setCloudStatus('syncing');
+    const [tradeRes, tacticRes] = await Promise.all([
+      _sb.from('trades').select('id,data').order('updated_at', { ascending: false }),
+      _sb.from('tactics').select('items').eq('user_id', 'default').limit(1)
+    ]);
+    if (tradeRes.error) throw tradeRes.error;
+    if (tradeRes.data) {
+      trades = tradeRes.data.map(r => r.data);
+      localStorage.setItem('tj-trades', JSON.stringify(trades));
+    }
+    if (tacticRes.data?.length) {
+      tactics = tacticRes.data[0].items;
+      localStorage.setItem('tj-tactics', JSON.stringify(tactics));
+    }
+    setCloudStatus('online');
+    return true;
+  } catch (e) {
+    console.error('Cloud load error:', e);
+    setCloudStatus('offline');
+    return false;
+  }
+}
+
+async function cloudSaveTrade(trade) {
+  if (!_sb) return;
+  try {
+    setCloudStatus('syncing');
+    const { error } = await _sb.from('trades').upsert(
+      { id: trade.id, data: trade, updated_at: new Date().toISOString() },
+      { onConflict: 'id' }
+    );
+    if (error) throw error;
+    setCloudStatus('online');
+  } catch (e) {
+    console.error('Cloud save trade error:', e);
+    setCloudStatus('offline');
+  }
+}
+
+async function cloudDeleteTrade(id) {
+  if (!_sb) return;
+  try {
+    setCloudStatus('syncing');
+    const { error } = await _sb.from('trades').delete().eq('id', id);
+    if (error) throw error;
+    setCloudStatus('online');
+  } catch (e) {
+    console.error('Cloud delete error:', e);
+    setCloudStatus('offline');
+  }
+}
+
+async function cloudSaveTactics() {
+  if (!_sb) return;
+  try {
+    const { error } = await _sb.from('tactics').upsert(
+      { user_id: 'default', items: tactics, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id' }
+    );
+    if (error) throw error;
+  } catch (e) {
+    console.error('Cloud save tactics error:', e);
+  }
+}
+
+/* ════════════════════════════════════════
+   Data（从 localStorage 初始化，云端加载后覆盖）
+════════════════════════════════════════ */
+let _htmlTemplate = '';
+let trades  = JSON.parse(localStorage.getItem('tj-trades') || '[]');
+let tactics = JSON.parse(localStorage.getItem('tj-tactics') || 'null') || [
+  '21 — 触及目标价 Hit target',
+  '22 — 触及止损   Hit stop',
+  '23 — 触及价值区 Hit value',
+  '23a — 触及通道线 Hit envelope',
+  '24 — 交易原地踏步 Trade going nowhere',
+  '25 — 趋势开始转变 Started turning',
+  '26 — 无法承受亏损 Couldn\'t stand the pain',
+  '27 — 垃圾交易    Junk trade, no business being in it'
+];
+
+let curId  = null;
+let charts = { E:[null,null], X:[null,null], A:[null] };
+
+/* 同时写 localStorage + server.py（本地向后兼容）*/
+function persist() {
+  localStorage.setItem('tj-trades',  JSON.stringify(trades));
+  localStorage.setItem('tj-tactics', JSON.stringify(tactics));
+  fetch('/api/trades', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ trades, tactics })
+  }).catch(() => {});
+}
+
+/* ════════════════════════════════════════
+   Navigation
+════════════════════════════════════════ */
+function showView(id) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById(id === 'dashboard' ? 'v-dash' : 'v-form').classList.add('active');
+  if (id === 'dashboard') renderDash();
+}
+
+function newTrade() {
+  curId  = null;
+  charts = { E:[null,null], X:[null,null], A:[null] };
+  resetForm();
+  document.getElementById('del-btn').style.display = 'none';
+  showView('form');
+}
+
+function editTrade(id) {
+  curId = id;
+  const t = trades.find(x => x.id === id);
+  if (!t) return;
+  charts = {
+    E: t.entryCharts    || [null,null],
+    X: t.exitCharts     || [null,null],
+    A: t.analysisCharts || [null]
+  };
+  loadForm(t);
+  document.getElementById('del-btn').style.display = 'inline-block';
+  showView('form');
+}
+
+/* ════════════════════════════════════════
+   Dashboard
+════════════════════════════════════════ */
+let currentTab = 'all';
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab-btn').forEach((b, i) => {
+    b.classList.toggle('active', ['all','monthly','quarterly','yearly'][i] === tab);
+  });
+  el('tab-all').style.display       = tab === 'all'       ? '' : 'none';
+  el('tab-monthly').style.display   = tab === 'monthly'   ? '' : 'none';
+  el('tab-quarterly').style.display = tab === 'quarterly' ? '' : 'none';
+  el('tab-yearly').style.display    = tab === 'yearly'    ? '' : 'none';
+  if (tab === 'monthly')   renderMonthly();
+  if (tab === 'quarterly') renderQuarterly();
+  if (tab === 'yearly')    renderYearly();
+}
+
+function renderDash() { renderStats(); renderList(); }
+
+/* ── Period stats helpers ── */
+function periodStats(ts) {
+  const cl    = ts.filter(t => t.status === 'closed');
+  const wins  = cl.filter(t => (t.gainLoss||0) > 0);
+  const totalGL = cl.reduce((s,t) => s+(t.gainLoss||0), 0);
+  const avgGL   = cl.length ? totalGL/cl.length : 0;
+  const gls     = cl.map(t => t.gainLoss||0);
+  const best    = gls.length ? Math.max(...gls) : null;
+  const worst   = gls.length ? Math.min(...gls) : null;
+  const winRate = cl.length  ? wins.length/cl.length*100 : 0;
+  return { total: ts.length, closed: cl.length, wins: wins.length, winRate, totalGL, avgGL, best, worst };
+}
+
+function periodRow(label, s, extraClass='', rowId='', detailId='') {
+  const gc   = s.totalGL >= 0 ? 'pos' : 'neg';
+  const agc  = s.avgGL   >= 0 ? 'pos' : 'neg';
+  const bc   = (s.best  != null && s.best  >= 0) ? 'pos' : 'neg';
+  const wc   = (s.worst != null && s.worst <  0) ? 'neg' : 'pos';
+  const barW = Math.round(s.winRate);
+  const barC = s.winRate >= 60 ? '#3fb950' : s.winRate >= 40 ? '#d29922' : '#f85149';
+  const clickable = detailId
+    ? `id="${rowId}" onclick="toggleDetail('${detailId}','${rowId}')" style="cursor:pointer"`
+    : '';
+  const arrow = detailId ? '<span style="font-size:10px;margin-right:4px;color:var(--text-muted)">▶</span>' : '';
+  return `<tr class="${extraClass}" ${clickable}>
+    <td><strong>${arrow}${label}</strong></td>
+    <td>${s.closed}</td>
+    <td>
+      <div>${s.winRate.toFixed(1)}% <span style="color:var(--text-muted);font-size:11px">(${s.wins}W / ${s.closed-s.wins}L)</span></div>
+      <div class="win-bar"><div class="win-bar-fill" style="width:${barW}%;background:${barC}"></div></div>
+    </td>
+    <td class="${gc}">${s.totalGL>=0?'+':''}$${s.totalGL.toFixed(2)}</td>
+    <td class="${agc}">${s.avgGL>=0?'+':''}$${s.avgGL.toFixed(2)}</td>
+    <td class="${bc}">${s.best  != null ? (s.best >=0?'+$':'-$')+Math.abs(s.best).toFixed(2)  : '—'}</td>
+    <td class="${wc}">${s.worst != null ? (s.worst>=0?'+$':'-$')+Math.abs(s.worst).toFixed(2) : '—'}</td>
+  </tr>`;
+}
+
+function periodTableHead() {
+  return `<thead><tr>
+    <th>周期</th><th>笔数</th><th>胜率 Win Rate</th>
+    <th>总盈亏</th><th>均笔盈亏</th><th>最佳笔</th><th>最差笔</th>
+  </tr></thead>`;
+}
+
+function renderMonthly() {
+  const groups = {};
+  trades.forEach(t => {
+    if (!t.firstEntryDate) return;
+    const ym = t.firstEntryDate.substring(0, 7);
+    (groups[ym] = groups[ym]||[]).push(t);
+  });
+  if (!Object.keys(groups).length) {
+    el('monthly-body').innerHTML = `<div class="empty"><h3>暂无数据</h3></div>`; return;
+  }
+  const byYear = {};
+  Object.entries(groups).sort((a,b)=>b[0]<a[0]?-1:1).forEach(([ym, ts]) => {
+    const yr = ym.substring(0,4);
+    (byYear[yr] = byYear[yr]||[]).push([ym, ts]);
+  });
+
+  const months = ['一月','二月','三月','四月','五月','六月','七月','八月','九月','十月','十一月','十二月'];
+  let html = '';
+  Object.entries(byYear).sort((a,b)=>b[0]<a[0]?-1:1).forEach(([yr, entries]) => {
+    const yrStats = periodStats(entries.flatMap(([,ts])=>ts));
+    html += `<div class="period-card">
+      <div class="ph">
+        <span>${yr} 年</span>
+        <span style="font-size:12px;color:var(--text-muted)">${yrStats.closed} 笔 &nbsp;|&nbsp; 胜率 ${yrStats.winRate.toFixed(1)}% &nbsp;|&nbsp; <span class="${yrStats.totalGL>=0?'pos':'neg'}">${yrStats.totalGL>=0?'+':''}$${yrStats.totalGL.toFixed(2)}</span></span>
+      </div>
+      <table class="ptable">${periodTableHead()}<tbody>`;
+    entries.forEach(([ym, ts]) => {
+      const m = parseInt(ym.substring(5,7)) - 1;
+      const label = `${ym.substring(0,4)}年 ${months[m]}`;
+      const uid = `m${ym.replace('-','')}`;
+      html += periodRow(label, periodStats(ts), '', uid, `${uid}d`);
+      html += `<tr id="${uid}d" class="drill-row" style="display:none"><td colspan="7"><div class="drill-inner">${renderTradesMini(ts)}</div></td></tr>`;
+    });
+    html += `</tbody></table></div>`;
+  });
+  el('monthly-body').innerHTML = html;
+}
+
+function renderQuarterly() {
+  const groups = {};
+  trades.forEach(t => {
+    if (!t.firstEntryDate) return;
+    const yr = t.firstEntryDate.substring(0,4);
+    const mo = parseInt(t.firstEntryDate.substring(5,7));
+    const q  = Math.ceil(mo/3);
+    const key = `${yr}-Q${q}`;
+    (groups[key] = groups[key]||[]).push(t);
+  });
+  if (!Object.keys(groups).length) {
+    el('quarterly-body').innerHTML = `<div class="empty"><h3>暂无数据</h3></div>`; return;
+  }
+  const byYear = {};
+  Object.entries(groups).sort((a,b)=>b[0]<a[0]?-1:1).forEach(([key, ts]) => {
+    const yr = key.substring(0,4);
+    (byYear[yr] = byYear[yr]||[]).push([key, ts]);
+  });
+
+  const qLabels = { Q1:'第一季度 (1–3月)', Q2:'第二季度 (4–6月)', Q3:'第三季度 (7–9月)', Q4:'第四季度 (10–12月)' };
+  let html = '';
+  Object.entries(byYear).sort((a,b)=>b[0]<a[0]?-1:1).forEach(([yr, entries]) => {
+    const yrStats = periodStats(entries.flatMap(([,ts])=>ts));
+    html += `<div class="period-card">
+      <div class="ph">
+        <span>${yr} 年</span>
+        <span style="font-size:12px;color:var(--text-muted)">${yrStats.closed} 笔 &nbsp;|&nbsp; 胜率 ${yrStats.winRate.toFixed(1)}% &nbsp;|&nbsp; <span class="${yrStats.totalGL>=0?'pos':'neg'}">${yrStats.totalGL>=0?'+':''}$${yrStats.totalGL.toFixed(2)}</span></span>
+      </div>
+      <table class="ptable">${periodTableHead()}<tbody>`;
+    entries.forEach(([key, ts]) => {
+      const q = key.substring(5);
+      const label = `${yr} ${qLabels[q]||q}`;
+      const uid = `q${key.replace('-','')}`;
+      html += periodRow(label, periodStats(ts), '', uid, `${uid}d`);
+      html += `<tr id="${uid}d" class="drill-row" style="display:none"><td colspan="7"><div class="drill-inner">${renderTradesMini(ts)}</div></td></tr>`;
+    });
+    html += `</tbody></table></div>`;
+  });
+  el('quarterly-body').innerHTML = html;
+}
+
+function renderYearly() {
+  const groups = {};
+  trades.forEach(t => {
+    if (!t.firstEntryDate) return;
+    const yr = t.firstEntryDate.substring(0, 4);
+    (groups[yr] = groups[yr]||[]).push(t);
+  });
+  if (!Object.keys(groups).length) {
+    el('yearly-body').innerHTML = `<div class="empty"><h3>暂无数据</h3></div>`; return;
+  }
+  const years = Object.keys(groups).sort((a,b) => b - a);
+
+  const allStats = periodStats(trades);
+  let html = `<div class="period-card" style="margin-bottom:14px">
+    <div class="ph"><span>所有年度汇总</span>
+      <span style="font-size:12px;color:var(--text-muted)">${allStats.closed} 笔 &nbsp;|&nbsp; 胜率 ${allStats.winRate.toFixed(1)}% &nbsp;|&nbsp;
+        <span class="${allStats.totalGL>=0?'pos':'neg'}">${allStats.totalGL>=0?'+':''}$${allStats.totalGL.toFixed(2)}</span>
+      </span>
+    </div>
+    <table class="ptable">${periodTableHead()}<tbody>`;
+  years.forEach(yr => {
+    const s = periodStats(groups[yr]);
+    const uid = `y${yr}`;
+    html += periodRow(`${yr} 年`, s, '', uid, `${uid}d`);
+    html += `<tr id="${uid}d" class="drill-row" style="display:none"><td colspan="7"><div class="drill-inner">${renderTradesMini(groups[yr])}</div></td></tr>`;
+  });
+  html += `</tbody></table></div>`;
+  el('yearly-body').innerHTML = html;
+}
+
+function renderTradesMini(ts) {
+  if (!ts.length) return '<p style="color:var(--text-muted);padding:12px 4px">该期间无交易记录</p>';
+  const sorted = [...ts].sort((a,b) => (b.firstEntryDate||'') < (a.firstEntryDate||'') ? -1 : 1);
+  const rows = sorted.map(t => {
+    const gl = t.gainLoss||0, glp = t.gainLossPct||0;
+    const gc = gl>=0?'pos':'neg';
+    const grade = t.tradeGrade!=null ? `${t.tradeGrade.toFixed(1)}% — ${t.tradeLetter}` : '—';
+    const gklass = t.tradeLetter ? `g${t.tradeLetter.toLowerCase()}` : '';
+    return `<tr onclick="editTrade('${t.id}')" style="cursor:pointer">
+      <td><strong>${t.symbol||'—'}</strong></td>
+      <td style="color:var(--text-muted)">${t.market||'—'}</td>
+      <td><span class="badge badge-${t.direction||'long'}">${t.direction==='short'?'做空':'做多'}</span></td>
+      <td>${t.firstEntryDate||'—'}</td>
+      <td>${t.lastExitDate||'—'}</td>
+      <td class="${gc}">${glp>=0?'+':''}${glp.toFixed(2)}%</td>
+      <td class="${gc}">${gl>=0?'+$':'-$'}${Math.abs(gl).toFixed(2)}</td>
+      <td class="${gklass}">${grade}</td>
+      <td><span class="badge badge-${t.status||'open'}">${t.status==='closed'?'已平仓':'持仓中'}</span></td>
+    </tr>`;
+  }).join('');
+  return `<table style="width:100%">
+    <thead><tr>
+      <th>标的</th><th>市场</th><th>方向</th><th>入场</th><th>出场</th><th>盈亏%</th><th>盈亏额</th><th>评分</th><th>状态</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function toggleDetail(detailId, rowId) {
+  const detail = document.getElementById(detailId);
+  const row    = document.getElementById(rowId);
+  if (!detail) return;
+  const isOpen = detail.style.display !== 'none';
+  detail.style.display = isOpen ? 'none' : 'table-row';
+  if (row) {
+    const arrow = row.querySelector('td:first-child span');
+    if (arrow) arrow.textContent = isOpen ? '▶' : '▼';
+    row.style.background = isOpen ? '' : 'rgba(56,139,253,.06)';
+  }
+}
+
+function renderStats() {
+  const cl = trades.filter(t => t.status === 'closed');
+  const wins = cl.filter(t => (t.gainLoss||0) > 0);
+  const gl = cl.reduce((s,t) => s + (t.gainLoss||0), 0);
+  const wr = cl.length ? (wins.length/cl.length*100).toFixed(1) : '0.0';
+  const avgGL = cl.length ? (gl/cl.length).toFixed(2) : '0.00';
+  document.getElementById('stats-grid').innerHTML = `
+    <div class="stat-card"><div class="stat-label">总交易</div><div class="stat-value">${trades.length}</div></div>
+    <div class="stat-card"><div class="stat-label">已完成</div><div class="stat-value">${cl.length}</div></div>
+    <div class="stat-card"><div class="stat-label">胜率 Win Rate</div><div class="stat-value ${parseFloat(wr)>=50?'pos':'neg'}">${wr}%</div></div>
+    <div class="stat-card"><div class="stat-label">总盈亏 P&L</div><div class="stat-value ${gl>=0?'pos':'neg'}">${gl>=0?'+':''}$${Math.abs(gl).toFixed(2)}</div></div>
+    <div class="stat-card"><div class="stat-label">均笔盈亏 Avg P&L</div><div class="stat-value ${parseFloat(avgGL)>=0?'pos':'neg'}">${parseFloat(avgGL)>=0?'+':''}$${Math.abs(avgGL)}</div></div>
+  `;
+}
+
+function renderList() {
+  const q = (document.getElementById('search')?.value||'').toLowerCase();
+  const list = trades.filter(t => !q || (t.symbol||'').toLowerCase().includes(q) || (t.market||'').toLowerCase().includes(q));
+  if (!list.length) {
+    document.getElementById('list-body').innerHTML = `<div class="empty"><h3>暂无交易记录</h3><p>点击右上角「+ 新建交易」开始记录</p></div>`;
+    return;
+  }
+  const rows = list.map(t => {
+    const gl  = t.gainLoss||0, glp = t.gainLossPct||0;
+    const gc  = gl>=0?'pos':'neg';
+    const grade = t.tradeGrade!=null ? `${t.tradeGrade.toFixed(1)}% — ${t.tradeLetter}` : '—';
+    const gklass = t.tradeLetter ? `g${t.tradeLetter.toLowerCase()}` : '';
+    return `<tr onclick="editTrade('${t.id}')">
+      <td><strong>${t.symbol||'—'}</strong></td>
+      <td>${t.market||'—'}</td>
+      <td><span class="badge badge-${t.direction||'long'}">${t.direction==='short'?'做空 Short':'做多 Long'}</span></td>
+      <td>${t.firstEntryDate||'—'}</td>
+      <td>${t.lastExitDate||'—'}</td>
+      <td class="${gc}">${glp>=0?'+':''}${glp.toFixed(2)}%</td>
+      <td class="${gc}">${gl>=0?'+$':'-$'}${Math.abs(gl).toFixed(2)}</td>
+      <td class="${gklass}">${grade}</td>
+      <td><span class="badge badge-${t.status||'open'}">${t.status==='closed'?'已平仓':'持仓中'}</span></td>
+    </tr>`;
+  }).join('');
+  document.getElementById('list-body').innerHTML = `
+    <table><thead><tr>
+      <th>标的</th><th>市场</th><th>方向</th><th>入场日期</th><th>出场日期</th><th>盈亏%</th><th>盈亏额</th><th>交易评分</th><th>状态</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+/* ════════════════════════════════════════
+   Form reset / load
+════════════════════════════════════════ */
+function resetForm() {
+  ['f-sym','f-mkt','f-sector','f-re','f-rx','f-pa','f-sl','f-pt'].forEach(id => document.getElementById(id).value = '');
+  el('planned-rr').textContent = '—'; el('planned-rr').className = 'rr-display'; el('planned-rr-sub').textContent = '';
+  el('actual-rr').textContent  = '—'; el('actual-rr').className  = 'rr-display'; el('actual-rr-sub').textContent  = '';
+  document.getElementById('f-dir').value    = 'long';
+  document.getElementById('f-status').value = 'open';
+  document.getElementById('f-tactic').value = '';
+  document.getElementById('en-body').innerHTML = '';
+  document.getElementById('ex-body').innerHTML = '';
+  document.getElementById('exit-results').innerHTML = '';
+  document.getElementById('sum-bar').style.display = 'none';
+  renderCharts();
+  addRow('en'); addRow('ex');
+  renderTactics();
+}
+
+function loadForm(t) {
+  document.getElementById('f-sym').value    = t.symbol||'';
+  document.getElementById('f-mkt').value    = t.market||'';
+  document.getElementById('f-sector').value = t.sector||'';
+  document.getElementById('f-dir').value    = t.direction||'long';
+  document.getElementById('f-status').value = t.status||'open';
+  document.getElementById('f-re').value     = t.reasonForEntry||'';
+  document.getElementById('f-rx').value     = t.reasonForExit||'';
+  document.getElementById('f-pa').value     = t.postTradeAnalysis||'';
+  document.getElementById('f-sl').value     = t.stopLoss||'';
+  document.getElementById('f-pt').value     = t.profitTarget||'';
+
+  renderCharts();
+
+  document.getElementById('en-body').innerHTML = '';
+  document.getElementById('ex-body').innerHTML = '';
+  (t.entries||[]).forEach(e => { addRow('en'); fillRow(document.getElementById('en-body').lastElementChild, e); });
+  (t.exits||[]).forEach(e  => { addRow('ex'); fillRow(document.getElementById('ex-body').lastElementChild, e); });
+  if (!t.entries?.length) addRow('en');
+  if (!t.exits?.length)   addRow('ex');
+
+  renderTactics();
+  setTimeout(() => {
+    document.getElementById('f-tactic').value = t.exitTactic||'';
+    calcAll();
+  }, 0);
+}
+
+function fillRow(tr, d) {
+  const ins = tr.querySelectorAll('input');
+  ins[0].value = d.date||'';
+  ins[1].value = d.orderPrice||'';
+  ins[2].value = d.filledPrice||'';
+  ins[3].value = d.slippage||'';
+  ins[4].value = d.shares||'';
+  ins[5].value = d.totalCost||'';
+  ins[6].value = d.dayHigh||'';
+  ins[7].value = d.dayLow||'';
+  const gtd = tr.querySelector('.grade-td');
+  if (d.grade != null) { gtd.textContent = d.grade.toFixed(1)+'%'; gtd.className = 'grade-td '+gradeClass(d.grade); }
+}
+
+/* ════════════════════════════════════════
+   Entry / Exit rows
+════════════════════════════════════════ */
+function addRow(tbl) {
+  const tbody = document.getElementById(tbl+'-body');
+  const isEn = tbl === 'en';
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input type="date" onchange="calcAll()"></td>
+    <td><input type="number" step="0.01" placeholder="0.00" onchange="onOrderChange(this); calcAll()"></td>
+    <td><input type="number" step="0.01" placeholder="0.00" onchange="onFilledChange(this,${isEn}); calcAll()"></td>
+    <td><input type="number" step="0.01" placeholder="0.00" readonly></td>
+    <td><input type="number" step="1"    placeholder="0"    onchange="onSharesChange(this); calcAll()"></td>
+    <td><input type="number" step="0.01" placeholder="0.00" readonly></td>
+    <td><input type="number" step="0.01" placeholder="0.00" onchange="calcGrade(this,${isEn}); calcAll()"></td>
+    <td><input type="number" step="0.01" placeholder="0.00" onchange="calcGrade(this,${isEn}); calcAll()"></td>
+    <td class="grade-td">—</td>
+    <td><button class="del-row" onclick="this.closest('tr').remove();calcAll()" title="删除">✕</button></td>
+  `;
+  tbody.appendChild(tr);
+}
+
+function onOrderChange(inp) {
+  const ins = inp.closest('tr').querySelectorAll('input');
+  const slip = (parseFloat(ins[2].value)||0) - (parseFloat(ins[1].value)||0);
+  ins[3].value = slip.toFixed(2);
+}
+
+function onFilledChange(inp, isEntry) {
+  const ins = inp.closest('tr').querySelectorAll('input');
+  ins[3].value = ((parseFloat(ins[2].value)||0) - (parseFloat(ins[1].value)||0)).toFixed(2);
+  ins[5].value = ((parseFloat(ins[2].value)||0) * (parseFloat(ins[4].value)||0)).toFixed(2);
+  calcGrade(inp, isEntry);
+}
+
+function onSharesChange(inp) {
+  const ins = inp.closest('tr').querySelectorAll('input');
+  ins[5].value = ((parseFloat(ins[2].value)||0) * (parseFloat(inp.value)||0)).toFixed(2);
+}
+
+function calcGrade(inp, isEntry) {
+  const ins  = inp.closest('tr').querySelectorAll('input');
+  const fill = parseFloat(ins[2].value)||0;
+  const high = parseFloat(ins[6].value)||0;
+  const low  = parseFloat(ins[7].value)||0;
+  const gtd  = inp.closest('tr').querySelector('.grade-td');
+  if (high > low && fill > 0) {
+    const dir = document.getElementById('f-dir').value;
+    let g;
+    if (isEntry) {
+      g = dir==='long' ? (high-fill)/(high-low)*100 : (fill-low)/(high-low)*100;
+    } else {
+      g = dir==='long' ? (fill-low)/(high-low)*100 : (high-fill)/(high-low)*100;
+    }
+    g = Math.max(0, Math.min(100, g));
+    gtd.textContent = g.toFixed(1)+'%';
+    gtd.className   = 'grade-td '+gradeClass(g);
+  } else {
+    gtd.textContent = '—';
+    gtd.className   = 'grade-td';
+  }
+}
+
+function gradeClass(g) {
+  if (g>=75) return 'ga';
+  if (g>=50) return 'gb';
+  if (g>=25) return 'gc';
+  if (g>=0)  return 'gd';
+  return 'gf';
+}
+
+function getRowData(tr) {
+  const ins = tr.querySelectorAll('input');
+  const gTxt = tr.querySelector('.grade-td').textContent.replace('%','').trim();
+  return {
+    date:       ins[0].value,
+    orderPrice: parseFloat(ins[1].value)||0,
+    filledPrice:parseFloat(ins[2].value)||0,
+    slippage:   parseFloat(ins[3].value)||0,
+    shares:     parseFloat(ins[4].value)||0,
+    totalCost:  parseFloat(ins[5].value)||0,
+    dayHigh:    parseFloat(ins[6].value)||0,
+    dayLow:     parseFloat(ins[7].value)||0,
+    grade:      (gTxt && gTxt!=='—') ? parseFloat(gTxt) : null
+  };
+}
+
+/* ════════════════════════════════════════
+   Calculations
+════════════════════════════════════════ */
+function calcAll() {
+  const ens = [...document.getElementById('en-body').querySelectorAll('tr')].map(r => getRowData(r)).filter(r => r.filledPrice>0 && r.shares>0);
+  const exs = [...document.getElementById('ex-body').querySelectorAll('tr')].map(r => getRowData(r)).filter(r => r.filledPrice>0 && r.shares>0);
+
+  if (!ens.length && !exs.length) {
+    document.getElementById('exit-results').innerHTML = '';
+    document.getElementById('sum-bar').style.display = 'none';
+    return;
+  }
+
+  const totEnSh = ens.reduce((s,r)=>s+r.shares,0);
+  const totExSh = exs.reduce((s,r)=>s+r.shares,0);
+  const avgEn   = totEnSh>0 ? ens.reduce((s,r)=>s+r.filledPrice*r.shares,0)/totEnSh : 0;
+  const avgEx   = totExSh>0 ? exs.reduce((s,r)=>s+r.filledPrice*r.shares,0)/totExSh : 0;
+
+  const enGrades = ens.map(r=>r.grade).filter(g=>g!=null);
+  const avgEnGrade = enGrades.length ? enGrades.reduce((a,b)=>a+b,0)/enGrades.length : null;
+
+  const dir  = document.getElementById('f-dir').value;
+  const mult = dir === 'short' ? -1 : 1;
+
+  let html = '';
+  exs.forEach((ex, i) => {
+    const gl    = mult * (ex.filledPrice - avgEn) * ex.shares;
+    const glPct = avgEn>0 ? mult * (ex.filledPrice - avgEn) / avgEn * 100 : 0;
+    const gc    = gl>=0?'pos':'neg';
+    let tgStr = '—';
+    let tgClass = '';
+    if (avgEnGrade!=null && ex.grade!=null) {
+      const tg = avgEnGrade/100 * ex.grade/100 * 100;
+      const ltr = tg>=25?'A':tg>=15?'B':tg>=5?'C':'D';
+      tgStr   = `${tg.toFixed(1)}% — ${ltr}`;
+      tgClass = gradeClass(tg);
+    }
+    html += `<div class="exit-result">
+      <span class="er-label">Exit ${i+1} 结果:</span>
+      <div class="er-item"><span>盈亏 %</span><span class="${gc}">${glPct>=0?'+':''}${glPct.toFixed(2)}%</span></div>
+      <div class="er-item"><span>盈亏额</span><span class="${gc}">${gl>=0?'+$':'-$'}${Math.abs(gl).toFixed(2)}</span></div>
+      <div class="er-item"><span>交易评分 Grade</span><span class="${tgClass}">${tgStr}</span></div>
+    </div>`;
+  });
+  document.getElementById('exit-results').innerHTML = html;
+
+  const totalGL  = avgEn>0&&avgEx>0 ? mult*(avgEx-avgEn)*Math.min(totEnSh,totExSh) : 0;
+  const totalGLP = avgEn>0&&avgEx>0 ? mult*(avgEx-avgEn)/avgEn*100 : 0;
+  const gc = totalGL>=0?'pos':'neg';
+
+  el('s-fe').textContent = ens[0]?.date||'—';
+  el('s-le').textContent = exs[exs.length-1]?.date||'—';
+  el('s-ts').textContent = totEnSh||'—';
+  el('s-ae').textContent = avgEn>0 ? '$'+avgEn.toFixed(2) : '—';
+  el('s-ax').textContent = avgEx>0 ? '$'+avgEx.toFixed(2) : '—';
+  setValClass('s-gp', (totalGLP>=0?'+':'')+totalGLP.toFixed(2)+'%', gc);
+  setValClass('s-gl', (totalGL>=0?'+$':'-$')+Math.abs(totalGL).toFixed(2), gc);
+  document.getElementById('sum-bar').style.display = 'grid';
+
+  calcRR(avgEn);
+  updateActualRR(avgEn, totalGL, Math.min(totEnSh, totExSh));
+}
+
+function el(id) { return document.getElementById(id); }
+function setValClass(id, txt, cls) { const e=el(id); e.textContent=txt; e.className='v '+cls; }
+
+/* ════════════════════════════════════════
+   Exit Tactics
+════════════════════════════════════════ */
+function renderTactics() {
+  const sel = el('f-tactic');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">— 选择出场策略 —</option>';
+  tactics.forEach(t => { const o=document.createElement('option'); o.value=t; o.textContent=t; sel.appendChild(o); });
+  sel.value = cur;
+  el('tactic-list').innerHTML = tactics.map((t,i)=>`
+    <div class="tactic-item">
+      <span>${t}</span>
+      <button class="del-row" onclick="rmTactic(${i})" title="删除">✕</button>
+    </div>`).join('');
+}
+
+async function addTactic() {
+  const inp = el('new-tactic');
+  const v = inp.value.trim();
+  if (!v) return;
+  tactics.push(v); inp.value='';
+  persist();
+  await cloudSaveTactics();
+  renderTactics();
+}
+
+async function rmTactic(i) {
+  tactics.splice(i,1);
+  persist();
+  await cloudSaveTactics();
+  renderTactics();
+}
+
+/* ════════════════════════════════════════
+   Chart uploads
+════════════════════════════════════════ */
+function pickFile(id) { document.getElementById(id).click(); }
+
+function loadChart(input, key, idx) {
+  const file = input.files[0];
+  if (!file) return;
+  if (file.size > 2*1024*1024) { alert('文件大小不能超过 2MB！'); input.value=''; return; }
+  const reader = new FileReader();
+  reader.onload = e => { charts[key][idx] = { name:file.name, data:e.target.result }; renderCharts(); };
+  reader.readAsDataURL(file);
+}
+
+function renderCharts() {
+  const map = [
+    { key:'E', ids:['ep-0','ep-1'] },
+    { key:'X', ids:['xp-0','xp-1'] },
+    { key:'A', ids:['ap-0'] }
+  ];
+  map.forEach(({key, ids}) => {
+    ids.forEach((pid, i) => {
+      const el = document.getElementById(pid);
+      if (!el) return;
+      const c = charts[key]?.[i];
+      el.innerHTML = c
+        ? `<img src="${c.data}" alt="${c.name}" onclick="openModal('${c.data}')">
+           <span class="fn" onclick="openModal('${c.data}')" title="${c.name}">${c.name}</span>
+           <button class="rm-chart" onclick="rmChart('${key}',${i})">✕</button>`
+        : '<span style="font-size:11px;color:var(--text-muted)">未选择文件</span>';
+    });
+  });
+}
+
+function rmChart(key, i) { charts[key][i]=null; renderCharts(); }
+
+/* ════════════════════════════════════════
+   Save / Delete（支持云端同步）
+════════════════════════════════════════ */
+function collectFormData() {
+  const ens = [...el('en-body').querySelectorAll('tr')].map(r=>getRowData(r));
+  const exs = [...el('ex-body').querySelectorAll('tr')].map(r=>getRowData(r));
+  const vEns = ens.filter(r=>r.filledPrice>0&&r.shares>0);
+  const vExs = exs.filter(r=>r.filledPrice>0&&r.shares>0);
+
+  const totEnSh = vEns.reduce((s,r)=>s+r.shares,0);
+  const totExSh = vExs.reduce((s,r)=>s+r.shares,0);
+  const avgEn   = totEnSh>0 ? vEns.reduce((s,r)=>s+r.filledPrice*r.shares,0)/totEnSh : 0;
+  const avgEx   = totExSh>0 ? vExs.reduce((s,r)=>s+r.filledPrice*r.shares,0)/totExSh : 0;
+  const _mult = el('f-dir').value === 'short' ? -1 : 1;
+  const gainLoss    = avgEn>0&&avgEx>0 ? _mult*(avgEx-avgEn)*Math.min(totEnSh,totExSh) : 0;
+  const gainLossPct = avgEn>0&&avgEx>0 ? _mult*(avgEx-avgEn)/avgEn*100 : 0;
+
+  const enGs = vEns.map(r=>r.grade).filter(g=>g!=null);
+  const exGs = vExs.map(r=>r.grade).filter(g=>g!=null);
+  const avgEnG = enGs.length ? enGs.reduce((a,b)=>a+b)/enGs.length : null;
+  const avgExG = exGs.length ? exGs.reduce((a,b)=>a+b)/exGs.length : null;
+  let tradeGrade=null, tradeLetter=null;
+  if (avgEnG!=null && avgExG!=null) {
+    tradeGrade  = avgEnG/100*avgExG/100*100;
+    tradeLetter = tradeGrade>=25?'A':tradeGrade>=15?'B':tradeGrade>=5?'C':'D';
+  }
+
+  return {
+    id: curId || Date.now().toString(),
+    symbol:  el('f-sym').value.toUpperCase(),
+    market:  el('f-mkt').value,
+    sector:  el('f-sector').value,
+    direction: el('f-dir').value,
+    status:  el('f-status').value,
+    reasonForEntry:    el('f-re').value,
+    entryCharts:       charts.E,
+    entries: ens,
+    exits:   exs,
+    reasonForExit:     el('f-rx').value,
+    exitCharts:        charts.X,
+    exitTactic:        el('f-tactic').value,
+    stopLoss:          parseFloat(el('f-sl').value) || null,
+    profitTarget:      parseFloat(el('f-pt').value) || null,
+    postTradeAnalysis: el('f-pa').value,
+    analysisCharts:    charts.A,
+    gainLoss, gainLossPct, tradeGrade, tradeLetter,
+    avgEntryPrice: avgEn, avgExitPrice: avgEx,
+    totalShares:  Math.max(totEnSh,totExSh),
+    firstEntryDate: vEns[0]?.date||null,
+    lastExitDate:   vExs[vExs.length-1]?.date||null,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+async function saveTrade() {
+  const data = collectFormData();
+  const idx  = trades.findIndex(t => t.id === data.id);
+  if (idx>=0) trades[idx]=data; else trades.unshift(data);
+  persist();
+  await cloudSaveTrade(data);
+  await cloudSaveTactics();
+  showView('dashboard');
+}
+
+async function deleteTrade() {
+  if (!curId) return;
+  if (!confirm('确定要删除此条交易记录吗？此操作不可撤销。')) return;
+  trades = trades.filter(t => t.id!==curId);
+  persist();
+  await cloudDeleteTrade(curId);
+  showView('dashboard');
+}
+
+/* ════════════════════════════════════════
+   Export / Import
+════════════════════════════════════════ */
+function exportData() {
+  const wb = XLSX.utils.book_new();
+  const date = new Date().toISOString().split('T')[0];
+
+  const summary = trades.map(t => ({
+    '标的代码': t.symbol || '',
+    '市场': t.market || '',
+    '板块': t.sector || '',
+    '方向': t.direction === 'short' ? '做空 Short' : '做多 Long',
+    '状态': t.status === 'closed' ? '已平仓' : '持仓中',
+    '首次入场日期': t.firstEntryDate || '',
+    '最后出场日期': t.lastExitDate || '',
+    '均入价': t.avgEntryPrice ? +t.avgEntryPrice.toFixed(4) : '',
+    '均出价': t.avgExitPrice  ? +t.avgExitPrice.toFixed(4)  : '',
+    '总股数': t.totalShares || '',
+    '盈亏%': t.gainLossPct != null ? +t.gainLossPct.toFixed(2) : '',
+    '盈亏额': t.gainLoss    != null ? +t.gainLoss.toFixed(2)    : '',
+    '交易评分%': t.tradeGrade != null ? +t.tradeGrade.toFixed(1) : '',
+    '评级': t.tradeLetter || '',
+    '出场策略': t.exitTactic || '',
+    '入场理由': t.reasonForEntry || '',
+    '出场理由': t.reasonForExit || '',
+    '复盘分析': t.postTradeAnalysis || '',
+  }));
+  const ws1 = XLSX.utils.json_to_sheet(summary);
+  ws1['!cols'] = [8,10,10,12,10,14,14,10,10,8,8,10,10,6,20,30,30,30].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb, ws1, '交易汇总');
+
+  const entries = [];
+  trades.forEach(t => (t.entries||[]).forEach(e => {
+    if (!e.filledPrice) return;
+    entries.push({
+      '标的': t.symbol||'', '日期': e.date||'',
+      '计划价': e.orderPrice||'', '成交价': e.filledPrice||'',
+      '滑点': e.slippage||'', '股数': e.shares||'',
+      '总额': e.totalCost||'', '日高': e.dayHigh||'', '日低': e.dayLow||'',
+      '入场评分%': e.grade!=null ? +e.grade.toFixed(1) : '',
+    });
+  }));
+  const ws2 = XLSX.utils.json_to_sheet(entries.length ? entries : [{}]);
+  XLSX.utils.book_append_sheet(wb, ws2, '入场明细');
+
+  const exits = [];
+  trades.forEach(t => (t.exits||[]).forEach(e => {
+    if (!e.filledPrice) return;
+    exits.push({
+      '标的': t.symbol||'', '日期': e.date||'',
+      '计划价': e.orderPrice||'', '成交价': e.filledPrice||'',
+      '滑点': e.slippage||'', '股数': e.shares||'',
+      '总额': e.totalCost||'', '日高': e.dayHigh||'', '日低': e.dayLow||'',
+      '出场评分%': e.grade!=null ? +e.grade.toFixed(1) : '',
+    });
+  }));
+  const ws3 = XLSX.utils.json_to_sheet(exits.length ? exits : [{}]);
+  XLSX.utils.book_append_sheet(wb, ws3, '出场明细');
+
+  XLSX.writeFile(wb, `交易日记-${date}.xlsx`);
+}
+
+function handleImport(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const r = new FileReader();
+  r.onload = async e => {
+    try {
+      const d = JSON.parse(e.target.result);
+      if (!d.trades) { alert('格式无效'); return; }
+      if (confirm(`导入 ${d.trades.length} 条记录？将与现有数据合并（跳过已存在的条目）。`)) {
+        const ids = new Set(trades.map(t=>t.id));
+        const newTrades = [];
+        d.trades.forEach(t => { if (!ids.has(t.id)) { trades.push(t); newTrades.push(t); } });
+        if (d.tactics) tactics = d.tactics;
+        persist();
+        renderDash();
+        // 批量上传新交易到云端
+        if (_sb && newTrades.length) {
+          const rows = newTrades.map(t => ({ id: t.id, data: t, updated_at: new Date().toISOString() }));
+          await _sb.from('trades').upsert(rows, { onConflict: 'id' });
+        }
+        if (_sb) await cloudSaveTactics();
+        alert('导入成功！');
+      }
+    } catch(err) { alert('导入失败：'+err.message); }
+  };
+  r.readAsText(file);
+  input.value='';
+}
+
+/* ════════════════════════════════════════
+   Modal
+════════════════════════════════════════ */
+function openModal(src) { el('modal-img').src=src; el('modal').classList.add('on'); }
+function closeModal()   { el('modal').classList.remove('on'); }
+document.addEventListener('keydown', e => { if(e.key==='Escape') closeModal(); });
+
+/* ════════════════════════════════════════
+   Risk / Reward calculations
+════════════════════════════════════════ */
+function calcRR(avgEnOverride) {
+  const sl  = parseFloat(el('f-sl').value) || 0;
+  const pt  = parseFloat(el('f-pt').value) || 0;
+  const dir = el('f-dir').value;
+
+  let avgEn = avgEnOverride || 0;
+  if (!avgEn) {
+    const ens = [...el('en-body').querySelectorAll('tr')]
+      .map(r => getRowData(r)).filter(r => r.filledPrice > 0 && r.shares > 0);
+    const tot = ens.reduce((s,r) => s+r.shares, 0);
+    avgEn = tot > 0 ? ens.reduce((s,r) => s+r.filledPrice*r.shares, 0) / tot : 0;
+  }
+
+  const pRR = el('planned-rr'), pSub = el('planned-rr-sub');
+
+  if (sl > 0 && pt > 0 && avgEn > 0) {
+    const risk   = dir === 'long' ? avgEn - sl  : sl - avgEn;
+    const reward = dir === 'long' ? pt - avgEn  : avgEn - pt;
+
+    if (risk > 0 && reward > 0) {
+      const rr = reward / risk;
+      pRR.textContent = `1 : ${rr.toFixed(2)}`;
+      pRR.className   = 'rr-display ' + (rr >= 2 ? 'pos' : rr >= 1 ? '' : 'neg');
+      pSub.textContent = `风险 $${risk.toFixed(2)} → 目标 $${reward.toFixed(2)} / 股`;
+    } else {
+      pRR.textContent = '设置有误'; pRR.className = 'rr-display neg';
+      pSub.textContent = dir === 'long'
+        ? '止损须低于入场价，目标须高于入场价'
+        : '止损须高于入场价，目标须低于入场价';
+    }
+  } else {
+    pRR.textContent = '—'; pRR.className = 'rr-display'; pSub.textContent = '';
+  }
+}
+
+function updateActualRR(avgEn, totalGL, totalShares) {
+  const sl  = parseFloat(el('f-sl').value) || 0;
+  const aRR = el('actual-rr'), aSub = el('actual-rr-sub');
+
+  if (sl > 0 && avgEn > 0 && totalShares > 0) {
+    const riskPerShare = Math.abs(avgEn - sl);
+    const riskTotal    = riskPerShare * totalShares;
+    if (riskTotal > 0) {
+      const r = totalGL / riskTotal;
+      aRR.textContent = (r >= 0 ? '+' : '') + r.toFixed(2) + ' R';
+      aRR.className   = 'rr-display ' + (r > 0 ? 'pos' : r < 0 ? 'neg' : '');
+      aSub.textContent = `计划风险 $${riskTotal.toFixed(2)}，实际 ${r >= 0 ? '盈利' : '亏损'} $${Math.abs(totalGL).toFixed(2)}`;
+      return;
+    }
+  }
+  aRR.textContent = '—'; aRR.className = 'rr-display'; aSub.textContent = '';
+}
+
+/* ════════════════════════════════════════
+   Clipboard paste support
+════════════════════════════════════════ */
+let activeSlot = null;
+
+document.addEventListener('click', e => {
+  const row = e.target.closest('[data-chart-key]');
+  document.querySelectorAll('[data-chart-key]').forEach(r => r.classList.remove('paste-active'));
+  if (!row) { activeSlot = null; return; }
+  activeSlot = { key: row.dataset.chartKey, idx: +row.dataset.chartIdx };
+  row.classList.add('paste-active');
+});
+
+document.addEventListener('paste', e => {
+  if (!activeSlot) return;
+  const img = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
+  if (!img) return;
+  e.preventDefault();
+  const reader = new FileReader();
+  reader.onload = ev => {
+    charts[activeSlot.key][activeSlot.idx] = { name: 'screenshot.png', data: ev.target.result };
+    renderCharts();
+    const next = activeSlot.idx + 1;
+    const max  = activeSlot.key === 'A' ? 1 : 2;
+    if (next < max && !charts[activeSlot.key][next]) {
+      const nextRow = document.querySelector(`[data-chart-key="${activeSlot.key}"][data-chart-idx="${next}"]`);
+      if (nextRow) {
+        document.querySelectorAll('[data-chart-key]').forEach(r => r.classList.remove('paste-active'));
+        nextRow.classList.add('paste-active');
+        activeSlot = { key: activeSlot.key, idx: next };
+      }
+    }
+  };
+  reader.readAsDataURL(img.getAsFile());
+});
+
+/* ════════════════════════════════════════
+   Save as portable HTML
+════════════════════════════════════════ */
+document.addEventListener('DOMContentLoaded', () => {
+  _htmlTemplate = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+});
+
+async function saveAsPortableFile() {
+  const date = new Date().toISOString().split('T')[0];
+  const filename = `交易日记-${date}.html`;
+
+  const dataBlock =
+    `\n  // ── 存档数据（自动注入，请勿手动修改）──\n` +
+    `  trades  = ${JSON.stringify(trades)};\n` +
+    `  tactics = ${JSON.stringify(tactics)};\n` +
+    `  // ── end ──\n  `;
+
+  let html = '';
+  try {
+    const res = await fetch(window.location.pathname);
+    if (res.ok) html = await res.text();
+  } catch(_) {}
+  if (!html) html = _htmlTemplate;
+  if (!html) { alert('无法生成存档，请改用「导出 Excel」或 JSON 备份。'); return; }
+
+  const INIT_MARKER = '/* ═══ INIT ═══ */';
+  if (html.includes(INIT_MARKER)) {
+    html = html.replace(INIT_MARKER, dataBlock + INIT_MARKER);
+  } else if (html.includes('renderDash();')) {
+    html = html.replace('renderDash();', dataBlock + 'renderDash();');
+  }
+  if (!html.trimStart().startsWith('<!DOCTYPE')) html = '<!DOCTYPE html>\n' + html;
+
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/* ════════════════════════════════════════
+   从 server.py API 拉取 IBKR 同步的新交易（本地向后兼容）
+════════════════════════════════════════ */
+async function fetchApiTrades() {
+  try {
+    const r = await fetch('/api/trades', { signal: AbortSignal.timeout(1500) });
+    if (!r.ok) return;
+    const d = await r.json();
+    if (!Array.isArray(d.trades) || !d.trades.length) return;
+
+    const localIds = new Set(trades.map(t => t.id));
+    let added = 0;
+    const newTrades = [];
+    d.trades.forEach(t => {
+      if (!localIds.has(t.id)) { trades.unshift(t); added++; newTrades.push(t); }
+    });
+
+    if (added) {
+      localStorage.setItem('tj-trades', JSON.stringify(trades));
+      renderDash();
+      // 同步到云端
+      if (_sb && newTrades.length) {
+        const rows = newTrades.map(t => ({ id: t.id, data: t, updated_at: new Date().toISOString() }));
+        await _sb.from('trades').upsert(rows, { onConflict: 'id' });
+      }
+      const tip = document.createElement('div');
+      tip.textContent = `✓ 从 IBKR 同步了 ${added} 条新交易`;
+      Object.assign(tip.style, {
+        position:'fixed', bottom:'20px', right:'20px',
+        background:'#3fb950', color:'#fff',
+        padding:'10px 18px', borderRadius:'8px',
+        fontSize:'13px', zIndex:'9999',
+        boxShadow:'0 4px 14px rgba(0,0,0,.4)',
+        transition:'opacity .4s'
+      });
+      document.body.appendChild(tip);
+      setTimeout(() => { tip.style.opacity = '0'; setTimeout(() => tip.remove(), 400); }, 4000);
+    }
+  } catch(e) {
+    // 无 server.py 时静默忽略
+  }
+}
+
+/* ════════════════════════════════════════
+   Init
+════════════════════════════════════════ */
+/* ═══ INIT ═══ */
+(async () => {
+  // 先显示 localStorage 缓存数据（即时响应）
+  renderDash();
+  // 再尝试连接 Supabase 并拉取最新数据
+  await initSupabase();
+  const cloudOk = await cloudLoad();
+  if (cloudOk) renderDash();   // 用云端数据刷新
+  // 本地 IBKR 同步（本地运行时）
+  fetchApiTrades();
+})();
+</script>
+</body>
+</html>

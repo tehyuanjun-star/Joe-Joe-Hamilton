@@ -1,0 +1,29 @@
+# 环境变量（含 Supabase Key，绝不提交到 Git）
+.env
+.env.local
+.env.*.local
+
+# Python 扫描器
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# 扫描结果（可能含持仓信息）
+scan_report_*.json
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Node（如果将来加入构建工具）
+node_modules/
+.vercel/
