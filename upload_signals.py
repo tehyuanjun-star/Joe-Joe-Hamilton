@@ -1,13 +1,12 @@
 """
 upload_signals.py
------------------
-把 scanner.py 生成的 signals/YYYY-MM-DD.json 上传到 Supabase signals 表。
+Upload signals/YYYY-MM-DD.json to Supabase signals table.
 
-用法：
-    python upload_signals.py                          # 上传最新报告
-    python upload_signals.py signals/2026-06-07.json # 指定文件
+Usage:
+    python upload_signals.py                          # upload latest
+    python upload_signals.py signals/2026-06-07.json # specific file
 
-环境变量（在 .env.local 或系统环境中设置）：
+Env vars (set in .env.local or system environment):
     SUPABASE_URL      = https://xxxx.supabase.co
     SUPABASE_ANON_KEY = sb_publishable_...
 """
@@ -16,19 +15,32 @@ import json
 import os
 import sys
 import glob
+
+# Fix Windows terminal encoding
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 from datetime import datetime, timezone
 from pathlib import Path
 
-# ── 读取环境变量 ─────────────────────────────────────────
+# -- Load env vars from .env.local if python-dotenv available --
 def load_env():
     try:
         from dotenv import load_dotenv
         env_path = Path(__file__).parent / '.env.local'
         if env_path.exists():
             load_dotenv(env_path)
-            print(f'  ✓ 从 {env_path.name} 加载环境变量')
+            print(f'  Loaded env from {env_path.name}')
     except ImportError:
-        pass
+        # Manually parse .env.local
+        env_path = Path(__file__).parent / '.env.local'
+        if env_path.exists():
+            with open(env_path, encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        k, v = line.split('=', 1)
+                        os.environ.setdefault(k.strip(), v.strip())
+            print(f'  Loaded env from {env_path.name}')
 
 load_env()
 
@@ -36,11 +48,11 @@ SUPABASE_URL = os.environ.get('SUPABASE_URL', '').strip()
 SUPABASE_KEY = os.environ.get('SUPABASE_ANON_KEY', '').strip()
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    print('❌ 错误：缺少 SUPABASE_URL 或 SUPABASE_ANON_KEY 环境变量')
-    print('   请在 .env.local 文件中配置（参考 .env.example）')
+    print('ERROR: missing SUPABASE_URL or SUPABASE_ANON_KEY')
+    print('  Create .env.local with these two variables (see .env.example)')
     sys.exit(1)
 
-# ── 找到要上传的文件 ─────────────────────────────────────
+# -- Find report file --
 BASE_DIR = Path(__file__).parent
 
 if len(sys.argv) >= 2:
@@ -48,11 +60,11 @@ if len(sys.argv) >= 2:
 else:
     files = sorted(glob.glob(str(BASE_DIR / 'signals' / '*.json')), reverse=True)
     if not files:
-        print('❌ 找不到 signals/*.json 文件，请先运行 scanner.py')
+        print('ERROR: no signals/*.json found. Run scanner.py first.')
         sys.exit(1)
     report_file = files[0]
 
-print(f'📂 上传文件: {report_file}')
+print(f'Uploading: {report_file}')
 
 with open(report_file, 'r', encoding='utf-8') as f:
     data = json.load(f)
@@ -72,7 +84,7 @@ payload = json.dumps({
     'created_at':   datetime.now(timezone.utc).isoformat(),
 }).encode('utf-8')
 
-# ── 调用 Supabase REST API ──────────────────────────────
+# -- Call Supabase REST API --
 import urllib.request
 import urllib.error
 
@@ -91,13 +103,13 @@ try:
         body   = resp.read().decode('utf-8')
         result = json.loads(body)
         r0     = result[0] if result else {}
-        print(f'✅ 上传成功！scan_date={r0.get("scan_date")}  '
+        print(f'OK: scan_date={r0.get("scan_date")}  '
               f'watch_now={r0.get("watch_now")}  watching={r0.get("watching")}')
 except urllib.error.HTTPError as e:
     body = e.read().decode('utf-8')
-    print(f'❌ 上传失败：HTTP {e.code}')
-    print(f'   {body}')
+    print(f'FAILED: HTTP {e.code}')
+    print(f'  {body}')
     sys.exit(1)
 except urllib.error.URLError as e:
-    print(f'❌ 网络错误：{e.reason}')
+    print(f'NETWORK ERROR: {e.reason}')
     sys.exit(1)
