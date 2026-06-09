@@ -761,13 +761,13 @@ input[type=file] { display: none; }
     <div id="sig-watching-section" style="display:none;margin-bottom:18px">
       <div style="font-size:14px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px">
         <span style="background:rgba(210,153,34,.15);color:#d29922;padding:3px 10px;border-radius:12px">🟡 观察中</span>
-        <span style="font-size:12px;color:var(--text-muted);font-weight:400">第一屏通过，等待 4h / 1h 确认</span>
+        <span style="font-size:12px;color:var(--text-muted);font-weight:400">满足 Stoch超买 或 EFI背离 其中一个，等待另一个确认</span>
       </div>
       <div class="card">
         <table>
           <thead><tr>
             <th>标的</th><th>距200MA</th><th>Stoch K/D</th><th>EFI背离</th>
-            <th>第一屏</th><th>第二屏(4h)</th><th>第三屏(1h)</th><th>入场区间</th>
+            <th>✓ 已满足</th><th>✗ 未满足</th><th>日线MACD</th><th>4h MACD</th>
           </tr></thead>
           <tbody id="sig-watching-body"></tbody>
         </table>
@@ -1918,21 +1918,22 @@ function renderSignals(row) {
   if (watching.length) {
     watchingSection.style.display = 'block';
     document.getElementById('sig-watching-body').innerHTML = watching.map(s => {
-      const f  = s.fundamentals || {};
-      const s1 = s.screen1_daily || {};
-      const s2 = s.screen2_4h   || {};
-      const s3 = s.screen3_1h   || {};
-      const ep = s.entry_range;
-      const pct = f.price_vs_ma200_pct;
+      const f    = s.fundamentals || {};
+      const dl   = s.daily || s.screen1_daily || {};
+      const r4h  = s.ref_4h || s.screen2_4h || {};
+      const pct  = f.price_vs_ma200_pct;
+      const met   = (s.conditions_met   || []).map(c => c === 'stoch_overbought' ? 'Stoch超买' : 'EFI背离').join(' + ') || '—';
+      const unmet = (s.conditions_unmet || []).map(c => c === 'stoch_overbought' ? 'Stoch超买' : 'EFI背离').join(' + ') || '—';
+      const macdMap = { deep_green:'深绿↗', light_green:'浅绿↘', negative:'负值', dead_cross:'死叉', mixed:'混合', unknown:'—' };
       return `<tr onclick="preFillTrade('${s.symbol}')" style="cursor:pointer">
         <td><strong>${s.symbol}</strong></td>
         <td class="${pct >= 0 ? 'pos' : 'neg'}">${pct != null ? (pct >= 0 ? '+' : '') + pct + '%' : '—'}</td>
-        <td>${s1.stoch_k ?? '—'} / ${s1.stoch_d ?? '—'}</td>
-        <td>${s1.efi13_divergence ? '<span style="color:#3fb950">✓ 成立</span>' : '<span style="color:var(--text-muted)">✗</span>'}</td>
-        <td>${s1.pass ? '<span style="color:#3fb950">✓</span>' : '<span style="color:#f85149">✗</span>'}</td>
-        <td>${s2.pass ? '<span style="color:#3fb950">✓</span>' : '<span style="color:#f85149">✗</span>'}</td>
-        <td>${s3.pass ? '<span style="color:#3fb950">✓</span>' : '<span style="color:#f85149">✗</span>'}</td>
-        <td style="font-size:12px;color:var(--text-muted)">${ep ? '$' + ep.low + ' – $' + ep.high : '—'}</td>
+        <td>${dl.stoch_k ?? '—'} / ${dl.stoch_d ?? '—'}</td>
+        <td>${dl.efi13_divergence ? '<span style="color:#3fb950">✓ 成立</span>' : '<span style="color:var(--text-muted)">✗</span>'}</td>
+        <td><span style="color:#3fb950;font-size:11px">${met}</span></td>
+        <td><span style="color:#f85149;font-size:11px">${unmet}</span></td>
+        <td style="color:var(--text-muted)">${macdMap[dl.macd_hist_state] || '—'}</td>
+        <td style="color:var(--text-muted)">${macdMap[r4h.macd_state] || '—'}</td>
       </tr>`;
     }).join('');
   } else {
@@ -1941,63 +1942,66 @@ function renderSignals(row) {
 
   if (!watchNow.length && !watching.length && !closeAlerts.length) {
     document.getElementById('sig-empty').style.display = 'block';
-    document.getElementById('sig-empty').innerHTML = `<div class="empty"><h3>本次扫描无信号</h3><p>扫描日期：${d.scan_date}，候选 ${summary.candidates ?? 0} 只，未发现符合三重滤网条件的股票</p></div>`;
+    document.getElementById('sig-empty').innerHTML = `<div class="empty"><h3>本次扫描无信号</h3><p>扫描日期：${d.scan_date}，候选 ${summary.candidates ?? 0} 只，未发现满足条件的股票</p></div>`;
   } else {
     document.getElementById('sig-empty').style.display = 'none';
   }
 }
 
 function signalCard(s) {
-  const f  = s.fundamentals || {};
-  const s1 = s.screen1_daily || {};
-  const s2 = s.screen2_4h   || {};
-  const s3 = s.screen3_1h   || {};
-  const ep = s.entry_range;
+  const f   = s.fundamentals || {};
+  const dl  = s.daily || s.screen1_daily || {};
+  const r4h = s.ref_4h || s.screen2_4h  || {};
   const pct = f.price_vs_ma200_pct;
   const pctStr = pct != null ? (pct >= 0 ? '+' : '') + pct + '%' : '—';
 
-  const dot = (pass) => pass
+  const macdLabel = (state) => {
+    const m = { deep_green:'深绿↗', light_green:'浅绿↘', negative:'负值', dead_cross:'死叉', mixed:'混合', unknown:'—' };
+    return m[state] || state || '—';
+  };
+  const macdColor = (state) => {
+    if (state === 'deep_green' || state === 'light_green') return '#3fb950';
+    if (state === 'negative' || state === 'dead_cross') return '#f85149';
+    return 'var(--text-muted)';
+  };
+  const check = (v) => v
     ? '<span style="color:#3fb950;font-weight:700">✓</span>'
     : '<span style="color:#f85149">✗</span>';
 
-  const macdLabel = (state) => {
-    if (!state) return '—';
-    const m = { deep_green:'深绿↗', light_green:'浅绿↘', negative:'负值', mixed:'混合', unknown:'—' };
-    return m[state] || state;
-  };
-
-  return `<div style="background:var(--bg-card);border:1px solid rgba(248,81,73,.35);border-radius:var(--r);padding:16px;position:relative">
+  return `<div style="background:var(--bg-card);border:1px solid rgba(248,81,73,.35);border-radius:var(--r);padding:16px">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
       <div>
         <div style="font-size:20px;font-weight:800;color:#f85149">${s.symbol}</div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${f.market||''} · $${f.close ?? '—'}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">$${f.price ?? '—'} &nbsp;·&nbsp; 距200MA <span style="color:${pct >= 0 ? '#3fb950':'#f85149'};font-weight:600">${pctStr}</span></div>
       </div>
-      <span style="background:rgba(248,81,73,.15);color:#f85149;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600">🔴 立即关注</span>
+      <span style="background:rgba(248,81,73,.15);color:#f85149;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600">🔴 双条件全满足</span>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;margin-bottom:12px">
-      <div style="background:var(--bg-input);border-radius:4px;padding:7px 10px">
-        <div style="color:var(--text-muted);font-size:10px;margin-bottom:3px">距 200MA</div>
-        <div style="font-weight:700;color:${pct >= 0 ? '#3fb950' : '#f85149'}">${pctStr}</div>
+
+    <!-- 两个筛选条件 -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <div style="background:${dl.stoch_overbought ? 'rgba(63,185,80,.1)' : 'var(--bg-input)'};border:1px solid ${dl.stoch_overbought ? 'rgba(63,185,80,.3)' : 'transparent'};border-radius:4px;padding:7px 10px">
+        <div style="color:var(--text-muted);font-size:10px;margin-bottom:3px">条件一：Stoch超买 ${check(dl.stoch_overbought)}</div>
+        <div style="font-weight:700;color:#d29922">%K ${dl.stoch_k ?? '—'} / %D ${dl.stoch_d ?? '—'}</div>
       </div>
-      <div style="background:var(--bg-input);border-radius:4px;padding:7px 10px">
-        <div style="color:var(--text-muted);font-size:10px;margin-bottom:3px">Stochastic K/D</div>
-        <div style="font-weight:700;color:#d29922">${s1.stoch_k ?? '—'} / ${s1.stoch_d ?? '—'}</div>
-      </div>
-      <div style="background:var(--bg-input);border-radius:4px;padding:7px 10px">
-        <div style="color:var(--text-muted);font-size:10px;margin-bottom:3px">EFI 顶背离</div>
-        <div style="font-weight:700">${s1.efi13_divergence ? '<span style="color:#3fb950">✓ 成立</span>' : '<span style="color:#f85149">✗ 未成立</span>'}</div>
-      </div>
-      <div style="background:var(--bg-input);border-radius:4px;padding:7px 10px">
-        <div style="color:var(--text-muted);font-size:10px;margin-bottom:3px">MACD 日线</div>
-        <div style="font-weight:700;color:var(--text-muted)">${macdLabel(s1.macd_hist_state)}</div>
+      <div style="background:${dl.efi13_divergence ? 'rgba(63,185,80,.1)' : 'var(--bg-input)'};border:1px solid ${dl.efi13_divergence ? 'rgba(63,185,80,.3)' : 'transparent'};border-radius:4px;padding:7px 10px">
+        <div style="color:var(--text-muted);font-size:10px;margin-bottom:3px">条件二：EFI背离 ${check(dl.efi13_divergence)}</div>
+        <div style="font-weight:700;color:${dl.efi13_divergence ? '#3fb950' : 'var(--text-muted)'}">${dl.divergence_strength ?? '—'}</div>
       </div>
     </div>
-    <div style="display:flex;gap:6px;font-size:11px;margin-bottom:12px">
-      <span style="background:var(--bg-input);padding:3px 8px;border-radius:4px">第一屏 ${dot(s1.pass)}</span>
-      <span style="background:var(--bg-input);padding:3px 8px;border-radius:4px">4h ${dot(s2.pass)}</span>
-      <span style="background:var(--bg-input);padding:3px 8px;border-radius:4px">1h ${dot(s3.pass)}</span>
+
+    <!-- 参考信息 -->
+    <div style="border-top:1px solid var(--border);padding-top:8px;margin-bottom:10px">
+      <div style="font-size:10px;color:var(--text-muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">参考信息（不作为筛选条件）</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <span style="background:var(--bg-input);padding:3px 10px;border-radius:12px;font-size:11px">
+          日线MACD <span style="color:${macdColor(dl.macd_hist_state)};font-weight:600">${macdLabel(dl.macd_hist_state)}</span>
+        </span>
+        <span style="background:var(--bg-input);padding:3px 10px;border-radius:12px;font-size:11px">
+          4h MACD <span style="color:${macdColor(r4h.macd_state)};font-weight:600">${macdLabel(r4h.macd_state)}</span>
+        </span>
+      </div>
     </div>
-    ${ep ? `<div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">入场区间：<strong style="color:var(--text)">$${ep.low} – $${ep.high}</strong></div>` : ''}
+
     <button class="btn btn-primary btn-sm" style="width:100%" onclick="preFillTrade('${s.symbol}')">＋ 新建交易</button>
   </div>`;
 }

@@ -1,11 +1,24 @@
 #!/usr/bin/env python3
 """
-scanner.py — 三重滤网做空信号扫描器 + 持仓平仓监控（美股短线）
+scanner.py — 双条件做空信号扫描器 + 持仓平仓监控（美股短线）
+
+筛选逻辑（放宽版）：
+  条件一：日线 Stochastic(14,3,3) 超买（%K > 80 且 %D > 80）
+  条件二：日线 EFI 13 熊市背离（近 30 根内价格创高但 EFI 高点下降）
+
+  两个都满足 → 🔴 立即关注
+  只满足一个 → 🟡 观察中（注明满足哪个）
+  两个都不满足 → 不显示
+
+参考信息（不作为筛选条件，显示在卡片里供人工判断）：
+  - 日线 MACD 能量柱状态
+  - 4小时 MACD 状态
+  - 股价距 200MA 百分比
 
 流程：
   Step 0  用 Finviz 筛选候选池（秒级，无需 IB Gateway）
   Step 1  基本面二次确认（直接读 Finviz DataFrame，无额外请求）
-  Step 2  三重滤网技术分析（日线 → 4h → 1h，需要 IB Gateway）
+  Step 2  技术分析（日线 + 4h 参考，需要 IB Gateway）
   Step 3  持仓平仓监控（读 positions.json，需要 IB Gateway）
   输出    signals/YYYY-MM-DD.json
 
@@ -201,23 +214,24 @@ def find_troughs(arr: np.ndarray, min_dist: int = 4) -> list:
 # Step 2：三重滤网各屏判断
 # ══════════════════════════════════════════════════════════════════
 
-def check_screen1(closes_d, highs_d, lows_d, volumes_d) -> dict:
+def check_daily_signals(closes_d, highs_d, lows_d, volumes_d) -> dict:
     """
-    第一屏（日线）三个条件必须同时满足：
-    1. Stochastic 14,3,3：%K > 80 AND %D > 80
-    2. EFI 13 熊市背离（近 30 根内）
-    3. MACD 能量柱：hist[-1] > 0 AND hist[-1] < hist[-2] < hist[-3]
+    日线双条件判断（放宽版）：
+    条件一：Stochastic(14,3,3) 超买（%K > 80 且 %D > 80）
+    条件二：EFI 13 熊市背离（近 30 根内价格创高但 EFI 高点下降）
+
+    MACD 状态作为参考信息输出，不参与筛选。
     """
     stoch_k, stoch_d = calc_stochastic(highs_d, lows_d, closes_d)
-    efi13  = calc_efi13(closes_d, volumes_d)
-    _, _, hist_d = calc_macd(closes_d)
+    efi13            = calc_efi13(closes_d, volumes_d)
+    _, _, hist_d     = calc_macd(closes_d)
 
-    # ① Stochastic
+    # ── 条件一：Stochastic 超买 ──────────────────────────────────
     k = float(stoch_k[-1]) if not np.isnan(stoch_k[-1]) else 0.0
     d = float(stoch_d[-1]) if not np.isnan(stoch_d[-1]) else 0.0
     stoch_pass = k > 80 and d > 80
 
-    # ② EFI 13 熊市背离（回望 30 根）
+    # ── 条件二：EFI 13 熊市背离（回望 30 根）─────────────────────
     c30 = closes_d[-30:]
     e30 = efi13[-30:]
     price_peaks = find_peaks(c30, min_dist=4)
@@ -226,8 +240,8 @@ def check_screen1(closes_d, highs_d, lows_d, volumes_d) -> dict:
         p1, p2 = price_peaks[-2], price_peaks[-1]
         if c30[p2] > c30[p1] and e30[p2] < e30[p1]:
             efi_div = True
-            fi_drop     = (e30[p1] - e30[p2]) / abs(e30[p1]) * 100 if e30[p1] != 0 else 0
-            price_rise  = (c30[p2] - c30[p1]) / c30[p1] * 100
+            fi_drop    = (e30[p1] - e30[p2]) / abs(e30[p1]) * 100 if e30[p1] != 0 else 0
+            price_rise = (c30[p2] - c30[p1]) / c30[p1] * 100
             if fi_drop > 30 or price_rise > 3:
                 div_strength = 'strong'
             elif fi_drop > 15 or price_rise > 1:
@@ -235,7 +249,7 @@ def check_screen1(closes_d, highs_d, lows_d, volumes_d) -> dict:
             else:
                 div_strength = 'weak'
 
-    # ③ MACD 能量柱：当前 > 0，连续 3 根递减
+    # ── 参考：MACD 能量柱状态（不作为筛选条件）──────────────────
     h3 = [x for x in hist_d[-3:] if not np.isnan(x)]
     if len(h3) == 3:
         macd_green_fading = h3[-1] > 0 and h3[-1] < h3[-2] < h3[-3]
@@ -249,30 +263,42 @@ def check_screen1(closes_d, highs_d, lows_d, volumes_d) -> dict:
         macd_green_fading = False
         macd_hist_state   = 'unknown'
 
+    # ── 综合：两个条件分别判断 ────────────────────────────────────
+    conditions_met = []
+    if stoch_pass:
+        conditions_met.append('stoch_overbought')
+    if efi_div:
+        conditions_met.append('efi_divergence')
+
     return {
         'stoch_k':             round(k, 2),
         'stoch_d':             round(d, 2),
         'stoch_overbought':    stoch_pass,
         'efi13_divergence':    efi_div,
         'divergence_strength': div_strength,
+        # 参考信息（不作为筛选条件）
         'macd_hist_state':     macd_hist_state,
         'macd_hist_shrinking': macd_green_fading,
-        'pass':                stoch_pass and efi_div and macd_green_fading,
+        # 满足条件列表
+        'conditions_met':      conditions_met,
+        'both_pass':           stoch_pass and efi_div,
+        'any_pass':            stoch_pass or efi_div,
     }
 
 
-def check_screen2(closes_4h, volumes_4h) -> dict:
+def check_4h_reference(closes_4h, volumes_4h) -> dict:
     """
-    第二屏（4小时）—— 满足其一：
-      MACD histogram 已转负  OR  MACD 死叉
-    同时：EFI 方向向下（当前值 < 前一根）
+    4小时参考信息（不作为筛选条件，供人工判断）：
+    - MACD 状态（死叉 / histogram 负值 / 正值递减）
+    - EFI 方向（向上 / 向下）
     """
-    efi13    = calc_efi13(closes_4h, volumes_4h)
+    efi13        = calc_efi13(closes_4h, volumes_4h)
     ml, sl, hist = calc_macd(closes_4h)
 
-    # MACD 死叉 / histogram 已负
     vm = [x for x in ml[-6:] if not np.isnan(x)]
     vs = [x for x in sl[-6:] if not np.isnan(x)]
+    vh = [x for x in hist[-3:] if not np.isnan(x)]
+
     hist_neg   = len(vm) >= 1 and len(vs) >= 1 and vm[-1] < vs[-1]
     dead_cross = False
     if len(vm) >= 2 and len(vs) >= 2:
@@ -281,15 +307,26 @@ def check_screen2(closes_4h, volumes_4h) -> dict:
                 dead_cross = True
                 break
 
-    # EFI 方向向下
-    ve = [x for x in efi13 if not np.isnan(x)]
+    # MACD 状态描述
+    if dead_cross:
+        macd_state = 'dead_cross'
+    elif hist_neg:
+        macd_state = 'negative'
+    elif len(vh) >= 2 and vh[-1] < vh[-2] and vh[-1] > 0:
+        macd_state = 'light_green'
+    elif len(vh) >= 1 and vh[-1] > 0:
+        macd_state = 'deep_green'
+    else:
+        macd_state = 'unknown'
+
+    ve       = [x for x in efi13 if not np.isnan(x)]
     efi_down = len(ve) >= 2 and ve[-1] < ve[-2]
 
     return {
+        'macd_state':         macd_state,
         'macd_dead_cross':    dead_cross,
         'macd_hist_negative': hist_neg,
         'efi_direction_down': efi_down,
-        'pass':               (dead_cross or hist_neg) and efi_down,
     }
 
 
@@ -483,64 +520,65 @@ def analyze_symbol(ib, symbol: str, finviz_row: dict | None = None) -> dict | No
         'finviz_checks':      fv_checks,
     }
 
-    # ── 第一屏（日线）────────────────────────────────────────────
-    s1 = check_screen1(closes_d, highs_d, lows_d, volumes_d)
-    if not s1['pass']:
-        print(f'  {symbol} — 第一屏未通过'
-              f'（Stoch={s1["stoch_overbought"]} '
-              f'Div={s1["efi13_divergence"]} '
-              f'MACD={s1["macd_hist_shrinking"]}）')
+    # ── 日线双条件判断 ───────────────────────────────────────────
+    daily = check_daily_signals(closes_d, highs_d, lows_d, volumes_d)
+
+    # 两个条件都不满足 → 跳过
+    if not daily['any_pass']:
+        print(f'  {symbol} — 双条件均未通过'
+              f'（Stoch={daily["stoch_overbought"]} '
+              f'Div={daily["efi13_divergence"]}）')
         return None
 
-    # ── 第二屏（4小时，60天）────────────────────────────────────
+    # ── 4小时参考数据 ────────────────────────────────────────────
     bars_4h = get_historical(ib, contract, '60 D', '4 hours')
-    s2 = {'pass': False, 'macd_dead_cross': False,
-          'macd_hist_negative': False, 'efi_direction_down': False}
+    ref_4h  = {'macd_state': 'unknown', 'macd_dead_cross': False,
+               'macd_hist_negative': False, 'efi_direction_down': False}
     if bars_4h and len(bars_4h) >= 30:
         c4, _, _, v4 = bars_to_arrays(bars_4h)
-        s2 = check_screen2(c4, v4)
+        ref_4h = check_4h_reference(c4, v4)
     else:
         print(f'  {symbol} ⚠ 4h 数据不足', end='  ')
 
-    # ── 第三屏（1小时，30天）────────────────────────────────────
-    bars_1h = get_historical(ib, contract, '30 D', '1 hour')
-    s3 = {'pass': False, 'macd_dead_cross': False, 'efi_cross_zero': False}
-    if bars_1h and len(bars_1h) >= 30:
-        c1, _, _, v1 = bars_to_arrays(bars_1h)
-        s3 = check_screen3(c1, v1)
-    else:
-        print(f'  {symbol} ⚠ 1h 数据不足', end='  ')
-
     # ── 综合评级 ─────────────────────────────────────────────────
-    if s2['pass'] and s3['pass']:
+    conds = daily['conditions_met']
+    if daily['both_pass']:
         status, icon = '立即关注', '🔴'
+        unmet = []
     else:
         status, icon = '观察中', '🟡'
+        unmet = [c for c in ['stoch_overbought', 'efi_divergence'] if c not in conds]
 
-    # ── 建议入场区间（最近 5 根 1h K 线）────────────────────────
-    entry_range = None
-    if bars_1h and len(bars_1h) >= 5:
-        entry_range = {
-            'low':  round(min(b.low   for b in bars_1h[-5:]), 2),
-            'high': round(max(b.close for b in bars_1h[-5:]), 2),
-        }
+    # 观察中时注明满足了哪个条件
+    cond_label = {
+        'stoch_overbought': 'Stoch超买',
+        'efi_divergence':   'EFI背离',
+    }
+    met_str  = ' + '.join(cond_label[c] for c in conds)
+    unmet_str= ' + '.join(cond_label[c] for c in unmet)
 
     print(f'  {symbol} {icon} {status}  '
-          f'%K={s1["stoch_k"]} %D={s1["stoch_d"]}  '
-          f'Div={s1["divergence_strength"]}  '
-          f'MACD={s1["macd_hist_state"]}  '
+          f'满足=[{met_str}]  '
+          f'%K={daily["stoch_k"]} %D={daily["stoch_d"]}  '
+          f'Div={daily["divergence_strength"]}  '
+          f'MACD日线={daily["macd_hist_state"]}  '
           f'距200MA {pct_vs_ma200:+.1f}%')
 
     return {
         'symbol':          symbol,
         'status':          status,
+        'conditions_met':  conds,
+        'conditions_unmet': unmet,
         'scan_timestamp':  datetime.now().isoformat(timespec='seconds'),
         'fundamentals':    fundamentals,
-        'screen1_daily':   s1,
-        'screen2_4h':      s2,
-        'screen3_1h':      s3,
-        'entry_range':     entry_range,
-        'close_warning':   None,   # 占位，持仓监控填充
+        'daily':           daily,      # 完整日线数据（含 MACD 参考）
+        'ref_4h':          ref_4h,     # 4h MACD 参考
+        # 向后兼容旧字段名（前端 UI 读取用）
+        'screen1_daily':   daily,
+        'screen2_4h':      ref_4h,
+        'screen3_1h':      {'pass': False},
+        'entry_range':     None,
+        'close_warning':   None,
     }
 
 
@@ -645,8 +683,8 @@ def run(tws_port: int, override_symbols: list, dry_run: bool,
     # ── 连接 IB Gateway ───────────────────────────────────────────
     ib = connect_ibkr(tws_port, client_id)
 
-    # ── Step 2：三重滤网 ──────────────────────────────────────────
-    print(f'📊 三重滤网分析（{len(symbols)} 只候选）...\n')
+    # ── Step 2：双条件信号扫描 ────────────────────────────────────
+    print(f'📊 双条件信号分析（{len(symbols)} 只候选）...\n')
     signals = []
     for i, sym in enumerate(symbols, 1):
         print(f'[{i:3d}/{len(symbols)}] ', end='', flush=True)
@@ -697,28 +735,31 @@ def run(tws_port: int, override_symbols: list, dry_run: bool,
         print(f'  🚨 持仓平仓警告：{alerts}')
 
     if watch_now:
-        print(f'\n  {"─"*18} 立即关注 {"─"*18}')
+        print(f'\n  {"─"*18} 立即关注（双条件全满足）{"─"*18}')
         for r in signals:
             if r['status'] != '立即关注':
                 continue
             f  = r['fundamentals']
-            s1 = r['screen1_daily']
-            ep = r.get('entry_range')
-            ep_str = f"  入场区间 ${ep['low']}–${ep['high']}" if ep else ''
+            d  = r['daily']
             print(f"  {r['symbol']:<6}  ${f['price']}  "
                   f"距200MA {f['price_vs_ma200_pct']:+.1f}%  "
-                  f"背离={s1['divergence_strength']}{ep_str}")
+                  f"%K={d['stoch_k']} %D={d['stoch_d']}  "
+                  f"背离={d['divergence_strength']}  "
+                  f"MACD={d['macd_hist_state']}")
 
     if watching:
-        print(f'\n  {"─"*20} 观察中 {"─"*20}')
+        print(f'\n  {"─"*20} 观察中（满足其中一个条件）{"─"*20}')
         for r in signals:
             if r['status'] != '观察中':
                 continue
-            s1 = r['screen1_daily']
+            d  = r['daily']
             f  = r['fundamentals']
-            print(f"  {r['symbol']:<6}  %K={s1['stoch_k']}  %D={s1['stoch_d']}"
-                  f"  背离={s1['divergence_strength']}"
-                  f"  距200MA {f['price_vs_ma200_pct']:+.1f}%")
+            met   = ' + '.join(r.get('conditions_met', []))
+            unmet = ' + '.join(r.get('conditions_unmet', []))
+            print(f"  {r['symbol']:<6}  满足=[{met}]  未满足=[{unmet}]  "
+                  f"%K={d['stoch_k']} %D={d['stoch_d']}  "
+                  f"背离={d['divergence_strength']}  "
+                  f"距200MA {f['price_vs_ma200_pct']:+.1f}%")
 
     if position_alerts:
         print(f'\n  {"─"*18} 持仓监控 {"─"*18}')
