@@ -759,9 +759,14 @@ input[type=file] { display: none; }
 
     <!-- Watching -->
     <div id="sig-watching-section" style="display:none;margin-bottom:18px">
-      <div style="font-size:14px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px">
+      <div style="font-size:14px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span style="background:rgba(210,153,34,.15);color:#d29922;padding:3px 10px;border-radius:12px">🟡 观察中</span>
         <span style="font-size:12px;color:var(--text-muted);font-weight:400">满足 Stoch超买 或 EFI背离 其中一个，等待另一个确认</span>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:6px">
+          <span style="font-size:11px;color:var(--text-muted)" id="watching-count"></span>
+          <button id="btn-filter-efi" onclick="toggleWatchFilter('efi')" class="btn btn-sm">EFI背离</button>
+          <button id="btn-filter-stoch" onclick="toggleWatchFilter('stoch')" class="btn btn-sm">Stoch超买</button>
+        </div>
       </div>
       <div class="card">
         <table>
@@ -1843,6 +1848,8 @@ async function fetchApiTrades() {
    信号扫描 Tab
 ════════════════════════════════════════ */
 let _lastSignalDate = null;
+let _watchFilter  = { efi: false, stoch: false };
+let _watchingData = [];
 
 async function loadSignals() {
   if (!_sb) {
@@ -1872,7 +1879,87 @@ async function loadSignals() {
   }
 }
 
+function toggleWatchFilter(type) {
+  _watchFilter[type] = !_watchFilter[type];
+  updateWatchFilterButtons();
+  renderWatchingList();
+}
+
+function updateWatchFilterButtons() {
+  const f = _watchFilter;
+  const btnEfi   = document.getElementById('btn-filter-efi');
+  const btnStoch = document.getElementById('btn-filter-stoch');
+  if (btnEfi) {
+    btnEfi.style.borderColor = f.efi ? '#3fb950' : '';
+    btnEfi.style.color       = f.efi ? '#3fb950' : '';
+    btnEfi.style.background  = f.efi ? 'rgba(63,185,80,.12)' : '';
+    btnEfi.style.fontWeight  = f.efi ? '600' : '';
+  }
+  if (btnStoch) {
+    btnStoch.style.borderColor = f.stoch ? '#d29922' : '';
+    btnStoch.style.color       = f.stoch ? '#d29922' : '';
+    btnStoch.style.background  = f.stoch ? 'rgba(210,153,34,.12)' : '';
+    btnStoch.style.fontWeight  = f.stoch ? '600' : '';
+  }
+}
+
+function renderWatchingList() {
+  const f = _watchFilter;
+  let list = [..._watchingData];
+
+  if (f.efi && f.stoch) {
+    list = list.filter(s => {
+      const dl = s.daily || s.screen1_daily || {};
+      return dl.efi13_divergence && dl.stoch_overbought;
+    }).sort((a, b) =>
+      (b.fundamentals?.price_vs_ma200_pct ?? -Infinity) - (a.fundamentals?.price_vs_ma200_pct ?? -Infinity)
+    );
+  } else if (f.efi) {
+    const met   = list.filter(s =>  (s.daily || s.screen1_daily || {}).efi13_divergence)
+                      .sort((a, b) => (b.fundamentals?.price_vs_ma200_pct ?? 0) - (a.fundamentals?.price_vs_ma200_pct ?? 0));
+    const unmet = list.filter(s => !(s.daily || s.screen1_daily || {}).efi13_divergence);
+    list = [...met, ...unmet];
+  } else if (f.stoch) {
+    const met   = list.filter(s =>  (s.daily || s.screen1_daily || {}).stoch_overbought)
+                      .sort((a, b) => ((b.daily || b.screen1_daily || {}).stoch_k ?? 0) - ((a.daily || a.screen1_daily || {}).stoch_k ?? 0));
+    const unmet = list.filter(s => !(s.daily || s.screen1_daily || {}).stoch_overbought);
+    list = [...met, ...unmet];
+  }
+
+  const bothActive = f.efi && f.stoch;
+  const macdMap = { deep_green:'深绿↗', light_green:'浅绿↘', negative:'负值', dead_cross:'死叉', mixed:'混合', unknown:'—' };
+
+  document.getElementById('sig-watching-body').innerHTML = list.map(s => {
+    const fu  = s.fundamentals || {};
+    const dl  = s.daily || s.screen1_daily || {};
+    const r4h = s.ref_4h || s.screen2_4h || {};
+    const pct = fu.price_vs_ma200_pct;
+    const met   = (s.conditions_met   || []).map(c => c === 'stoch_overbought' ? 'Stoch超买' : 'EFI背离').join(' + ') || '—';
+    const unmet = (s.conditions_unmet || []).map(c => c === 'stoch_overbought' ? 'Stoch超买' : 'EFI背离').join(' + ') || '—';
+    const highlight = bothActive ? 'background:rgba(63,185,80,.07);' : '';
+    return `<tr onclick="preFillTrade('${s.symbol}')" style="cursor:pointer;${highlight}">
+      <td><strong>${s.symbol}</strong></td>
+      <td class="${pct >= 0 ? 'pos' : 'neg'}">${pct != null ? (pct >= 0 ? '+' : '') + pct + '%' : '—'}</td>
+      <td>${dl.stoch_k ?? '—'} / ${dl.stoch_d ?? '—'}</td>
+      <td>${dl.efi13_divergence ? '<span style="color:#3fb950">✓ 成立</span>' : '<span style="color:var(--text-muted)">✗</span>'}</td>
+      <td><span style="color:#3fb950;font-size:11px">${met}</span></td>
+      <td><span style="color:#f85149;font-size:11px">${unmet}</span></td>
+      <td style="color:var(--text-muted)">${macdMap[dl.macd_hist_state] || '—'}</td>
+      <td style="color:var(--text-muted)">${macdMap[r4h.macd_state] || '—'}</td>
+    </tr>`;
+  }).join('');
+
+  const countEl = document.getElementById('watching-count');
+  if (countEl) {
+    const total = _watchingData.length;
+    const shown = list.length;
+    countEl.textContent = (f.efi || f.stoch) ? `${shown} / ${total}` : `${total}`;
+  }
+}
+
 function renderSignals(row) {
+  _watchFilter  = { efi: false, stoch: false };
+  _watchingData = [];
   const d = row.data;
   const summary = d.summary || {};
 
@@ -1917,25 +2004,8 @@ function renderSignals(row) {
   const watchingSection = document.getElementById('sig-watching-section');
   if (watching.length) {
     watchingSection.style.display = 'block';
-    document.getElementById('sig-watching-body').innerHTML = watching.map(s => {
-      const f    = s.fundamentals || {};
-      const dl   = s.daily || s.screen1_daily || {};
-      const r4h  = s.ref_4h || s.screen2_4h || {};
-      const pct  = f.price_vs_ma200_pct;
-      const met   = (s.conditions_met   || []).map(c => c === 'stoch_overbought' ? 'Stoch超买' : 'EFI背离').join(' + ') || '—';
-      const unmet = (s.conditions_unmet || []).map(c => c === 'stoch_overbought' ? 'Stoch超买' : 'EFI背离').join(' + ') || '—';
-      const macdMap = { deep_green:'深绿↗', light_green:'浅绿↘', negative:'负值', dead_cross:'死叉', mixed:'混合', unknown:'—' };
-      return `<tr onclick="preFillTrade('${s.symbol}')" style="cursor:pointer">
-        <td><strong>${s.symbol}</strong></td>
-        <td class="${pct >= 0 ? 'pos' : 'neg'}">${pct != null ? (pct >= 0 ? '+' : '') + pct + '%' : '—'}</td>
-        <td>${dl.stoch_k ?? '—'} / ${dl.stoch_d ?? '—'}</td>
-        <td>${dl.efi13_divergence ? '<span style="color:#3fb950">✓ 成立</span>' : '<span style="color:var(--text-muted)">✗</span>'}</td>
-        <td><span style="color:#3fb950;font-size:11px">${met}</span></td>
-        <td><span style="color:#f85149;font-size:11px">${unmet}</span></td>
-        <td style="color:var(--text-muted)">${macdMap[dl.macd_hist_state] || '—'}</td>
-        <td style="color:var(--text-muted)">${macdMap[r4h.macd_state] || '—'}</td>
-      </tr>`;
-    }).join('');
+    _watchingData = watching;
+    renderWatchingList();
   } else {
     watchingSection.style.display = 'none';
   }
