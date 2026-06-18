@@ -43,9 +43,28 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
 if sys.stderr.encoding and sys.stderr.encoding.lower() != 'utf-8':
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
-SIGNALS_DIR   = os.path.join(BASE_DIR, 'signals')
+BASE_DIR       = os.path.dirname(os.path.abspath(__file__))
+SIGNALS_DIR    = os.path.join(BASE_DIR, 'signals')
 POSITIONS_FILE = os.path.join(BASE_DIR, 'positions.json')
+
+# ── 从 .env.local 加载环境变量（与 upload_signals.py 相同逻辑）───────
+def _load_env():
+    from pathlib import Path
+    env_path = Path(__file__).parent / '.env.local'
+    if not env_path.exists():
+        return
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(env_path)
+    except ImportError:
+        with open(env_path, encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    k, v = line.split('=', 1)
+                    os.environ.setdefault(k.strip(), v.strip())
+
+_load_env()
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -586,7 +605,33 @@ def analyze_symbol(ib, symbol: str, finviz_row: dict | None = None) -> dict | No
 # 持仓平仓监控
 # ══════════════════════════════════════════════════════════════════
 
-def load_positions() -> list:
+def _load_positions_supabase() -> list | None:
+    """从 Supabase positions 表读取持仓中的记录。失败返回 None。"""
+    import urllib.request
+    url = os.environ.get('SUPABASE_URL', '').strip()
+    key = os.environ.get('SUPABASE_ANON_KEY', '').strip()
+    if not url or not key:
+        return None
+    try:
+        api_url = (f'{url}/rest/v1/positions'
+                   f'?status=eq.持仓中'
+                   f'&select=symbol,entry_price,entry_date'
+                   f'&order=created_at.asc')
+        req = urllib.request.Request(api_url, headers={
+            'apikey':        key,
+            'Authorization': f'Bearer {key}',
+        })
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        print(f'  ✓ 从 Supabase 读取 {len(data)} 条持仓记录')
+        return data
+    except Exception as e:
+        print(f'  ⚠ Supabase 持仓读取失败，回退本地文件：{e}')
+        return None
+
+
+def _load_positions_local() -> list:
+    """从本地 positions.json 读取持仓记录。"""
     if not os.path.exists(POSITIONS_FILE):
         return []
     try:
@@ -595,6 +640,15 @@ def load_positions() -> list:
     except Exception as e:
         print(f'⚠ 读取 positions.json 失败：{e}')
         return []
+
+
+def load_positions() -> list:
+    """优先从 Supabase 读取持仓，Supabase 不可用时回退到本地 positions.json。"""
+    result = _load_positions_supabase()
+    if result is not None:
+        return result
+    print('  → 使用本地 positions.json')
+    return _load_positions_local()
 
 
 def monitor_positions(ib) -> list:

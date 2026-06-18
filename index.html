@@ -1558,16 +1558,43 @@ async function saveTrade() {
   persist();
   await cloudSaveTrade(data);
   await cloudSaveTactics();
+  await syncPosition(data);
   showView('dashboard');
 }
 
 async function deleteTrade() {
   if (!curId) return;
   if (!confirm('确定要删除此条交易记录吗？此操作不可撤销。')) return;
-  trades = trades.filter(t => t.id!==curId);
+  const t = trades.find(x => x.id === curId);
+  trades = trades.filter(x => x.id !== curId);
   persist();
   await cloudDeleteTrade(curId);
+  if (_sb && t && t.direction === 'short') {
+    try {
+      await _sb.from('positions').upsert(
+        { id: t.id, symbol: t.symbol || '', status: '已平仓', updated_at: new Date().toISOString() },
+        { onConflict: 'id' }
+      );
+    } catch(e) { console.error('syncPosition delete:', e); }
+  }
   showView('dashboard');
+}
+
+async function syncPosition(trade) {
+  if (!_sb) return;
+  if ((trade.direction || 'long') !== 'short') return;
+  try {
+    await _sb.from('positions').upsert({
+      id:          trade.id,
+      symbol:      trade.symbol || '',
+      entry_price: trade.avgEntryPrice || null,
+      entry_date:  trade.firstEntryDate || null,
+      status:      trade.status === 'open' ? '持仓中' : '已平仓',
+      updated_at:  new Date().toISOString(),
+    }, { onConflict: 'id' });
+  } catch(e) {
+    console.error('syncPosition error:', e);
+  }
 }
 
 /* ════════════════════════════════════════
