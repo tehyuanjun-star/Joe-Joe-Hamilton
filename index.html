@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>交易日记 Trading Journal</title>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- Supabase JS client removed: all Supabase calls now proxy through /api/* on Vercel -->
 <style>
 :root {
   --bg: #0f1117;
@@ -832,12 +832,12 @@ async function initSupabase() {
     const cfg = await r.json();
     if (!cfg.url || !cfg.key) {
       _sbInitError = 'env';
-      console.warn('[Supabase] /api/config 返回了空的 url 或 key');
+      console.warn('[API] /api/config 返回了空的 url 或 key');
       return;
     }
-    _sb = supabase.createClient(cfg.url, cfg.key);
+    _sb = true; // 代理模式：Supabase 调用通过 Vercel /api/* 转发，浏览器不直连 Supabase
     setCloudStatus('online');
-    console.log('[Supabase] 连接成功 ✅', cfg.url);
+    console.log('[API Proxy] 云端连接就绪 ✅ (通过 Vercel 代理，无需直连 Supabase)');
   } catch (e) {
     _sbInitError = 'network';
     console.warn('[Supabase] initSupabase 意外错误:', e);
@@ -849,10 +849,10 @@ async function cloudLoad() {
   try {
     setCloudStatus('syncing');
     const [tradeRes, tacticRes] = await Promise.all([
-      _sb.from('trades').select('id,data').order('updated_at', { ascending: false }),
-      _sb.from('tactics').select('items').eq('user_id', 'default').limit(1)
+      fetch('/api/trades').then(r => r.json()),
+      fetch('/api/tactics').then(r => r.json()),
     ]);
-    if (tradeRes.error) throw tradeRes.error;
+    if (tradeRes.error) throw new Error(JSON.stringify(tradeRes.error));
     if (tradeRes.data) {
       trades = tradeRes.data.map(r => r.data);
       localStorage.setItem('tj-trades', JSON.stringify(trades));
@@ -874,11 +874,12 @@ async function cloudSaveTrade(trade) {
   if (!_sb) return;
   try {
     setCloudStatus('syncing');
-    const { error } = await _sb.from('trades').upsert(
-      { id: trade.id, data: trade, updated_at: new Date().toISOString() },
-      { onConflict: 'id' }
-    );
-    if (error) throw error;
+    const r = await fetch('/api/trades', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: trade.id, data: trade, updated_at: new Date().toISOString() }),
+    });
+    if (!r.ok) throw new Error(await r.text());
     setCloudStatus('online');
   } catch (e) {
     console.error('Cloud save trade error:', e);
@@ -890,8 +891,8 @@ async function cloudDeleteTrade(id) {
   if (!_sb) return;
   try {
     setCloudStatus('syncing');
-    const { error } = await _sb.from('trades').delete().eq('id', id);
-    if (error) throw error;
+    const r = await fetch(`/api/trades?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error(await r.text());
     setCloudStatus('online');
   } catch (e) {
     console.error('Cloud delete error:', e);
@@ -902,11 +903,12 @@ async function cloudDeleteTrade(id) {
 async function cloudSaveTactics() {
   if (!_sb) return;
   try {
-    const { error } = await _sb.from('tactics').upsert(
-      { user_id: 'default', items: tactics, updated_at: new Date().toISOString() },
-      { onConflict: 'user_id' }
-    );
-    if (error) throw error;
+    const r = await fetch('/api/tactics', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: 'default', items: tactics, updated_at: new Date().toISOString() }),
+    });
+    if (!r.ok) throw new Error(await r.text());
   } catch (e) {
     console.error('Cloud save tactics error:', e);
   }
@@ -1592,10 +1594,11 @@ async function deleteTrade() {
   await cloudDeleteTrade(curId);
   if (_sb && t && t.direction === 'short') {
     try {
-      await _sb.from('positions').upsert(
-        { id: t.id, symbol: t.symbol || '', status: '已平仓', updated_at: new Date().toISOString() },
-        { onConflict: 'id' }
-      );
+      await fetch('/api/positions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: t.id, symbol: t.symbol || '', status: '已平仓', updated_at: new Date().toISOString() }),
+      });
     } catch(e) { console.error('syncPosition delete:', e); }
   }
   showView('dashboard');
@@ -1605,14 +1608,18 @@ async function syncPosition(trade) {
   if (!_sb) return;
   if ((trade.direction || 'long') !== 'short') return;
   try {
-    await _sb.from('positions').upsert({
-      id:          trade.id,
-      symbol:      trade.symbol || '',
-      entry_price: trade.avgEntryPrice || null,
-      entry_date:  trade.firstEntryDate || null,
-      status:      trade.status === 'open' ? '持仓中' : '已平仓',
-      updated_at:  new Date().toISOString(),
-    }, { onConflict: 'id' });
+    await fetch('/api/positions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id:          trade.id,
+        symbol:      trade.symbol || '',
+        entry_price: trade.avgEntryPrice || null,
+        entry_date:  trade.firstEntryDate || null,
+        status:      trade.status === 'open' ? '持仓中' : '已平仓',
+        updated_at:  new Date().toISOString(),
+      }),
+    });
   } catch(e) {
     console.error('syncPosition error:', e);
   }
@@ -1698,7 +1705,7 @@ function handleImport(input) {
         // 批量上传新交易到云端
         if (_sb && newTrades.length) {
           const rows = newTrades.map(t => ({ id: t.id, data: t, updated_at: new Date().toISOString() }));
-          await _sb.from('trades').upsert(rows, { onConflict: 'id' });
+          await fetch('/api/trades', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rows) });
         }
         if (_sb) await cloudSaveTactics();
         alert('导入成功！');
@@ -1872,7 +1879,7 @@ async function fetchApiTrades() {
       // 同步到云端
       if (_sb && newTrades.length) {
         const rows = newTrades.map(t => ({ id: t.id, data: t, updated_at: new Date().toISOString() }));
-        await _sb.from('trades').upsert(rows, { onConflict: 'id' });
+        await fetch('/api/trades', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rows) });
       }
       const tip = document.createElement('div');
       tip.textContent = `✓ 从 IBKR 同步了 ${added} 条新交易`;
@@ -1913,12 +1920,8 @@ async function loadSignals() {
   document.getElementById('sig-empty').style.display = 'none';
 
   try {
-    const { data, error } = await _sb
-      .from('signals')
-      .select('*')
-      .order('scan_date', { ascending: false })
-      .limit(1)
-      .single();
+    const r = await fetch('/api/signals');
+    const { data, error } = await r.json();
 
     if (error || !data) {
       document.getElementById('sig-empty').style.display = 'block';
