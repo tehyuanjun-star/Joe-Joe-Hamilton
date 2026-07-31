@@ -810,16 +810,37 @@ function setCloudStatus(state) {
                    state === 'syncing' ? '🔄 同步中…'  : '⚫ 本地';
 }
 
+let _sbInitError = null; // 'env' | 'timeout' | 'network' | null
+
 async function initSupabase() {
+  _sbInitError = null;
   try {
-    const r = await fetch('/api/config', { signal: AbortSignal.timeout(2000) });
-    if (!r.ok) return;
+    let r;
+    try {
+      r = await fetch('/api/config', { signal: AbortSignal.timeout(5000) });
+    } catch (e) {
+      _sbInitError = e.name === 'TimeoutError' ? 'timeout' : 'network';
+      console.warn('[Supabase] /api/config 请求失败:', e.message);
+      return;
+    }
+    if (!r.ok) {
+      _sbInitError = 'env';
+      const body = await r.json().catch(() => ({}));
+      console.warn(`[Supabase] /api/config 返回 ${r.status} — 请检查 Vercel 环境变量:`, body);
+      return;
+    }
     const cfg = await r.json();
-    if (!cfg.url || !cfg.key) return;
+    if (!cfg.url || !cfg.key) {
+      _sbInitError = 'env';
+      console.warn('[Supabase] /api/config 返回了空的 url 或 key');
+      return;
+    }
     _sb = supabase.createClient(cfg.url, cfg.key);
     setCloudStatus('online');
-  } catch (_) {
-    /* 本地直接打开 HTML 文件，或 Vercel 未配置环境变量 */
+    console.log('[Supabase] 连接成功 ✅', cfg.url);
+  } catch (e) {
+    _sbInitError = 'network';
+    console.warn('[Supabase] initSupabase 意外错误:', e);
   }
 }
 
@@ -1880,8 +1901,13 @@ let _watchingData = [];
 
 async function loadSignals() {
   if (!_sb) {
+    const errDetail = {
+      env:     '❌ Vercel 环境变量未配置<br><small style="color:var(--text-muted)">请在 Vercel Dashboard → Settings → Environment Variables<br>添加 <code>SUPABASE_URL</code> 和 <code>SUPABASE_ANON_KEY</code>，然后重新部署</small>',
+      timeout: '⏱ 连接超时，请刷新页面重试<br><small style="color:var(--text-muted)">Vercel 函数冷启动较慢，刷新后通常可以恢复</small>',
+      network: '🌐 无法连接到 /api/config<br><small style="color:var(--text-muted)">请检查网络连接，或确认已部署到 Vercel</small>',
+    }[_sbInitError] || '请确保已部署到 Vercel 并配置 <code>SUPABASE_URL</code>、<code>SUPABASE_ANON_KEY</code> 环境变量';
     document.getElementById('sig-empty').style.display = 'block';
-    document.getElementById('sig-empty').innerHTML = `<div class="empty"><h3>需要云端连接</h3><p>信号数据存储在 Supabase，请确保已部署到 Vercel 并配置环境变量</p></div>`;
+    document.getElementById('sig-empty').innerHTML = `<div class="empty"><h3>云端连接失败</h3><p style="margin-top:8px;line-height:1.7">${errDetail}</p></div>`;
     return;
   }
   document.getElementById('sig-empty').style.display = 'none';
